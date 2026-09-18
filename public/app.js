@@ -5,10 +5,17 @@
    ============================================================ */
 
 const EVENTS = {
-  43: { id: 43, name: '메이저 프로리그', cn: 'Major Pro League', short: 'Major', color: '#3d5afe' },
-  33: { id: 33, name: 'K리그', cn: 'K League', short: 'K League', color: '#12a150' },
-  64: { id: 64, name: '준메이저 프로리그', cn: 'Semi-Major Pro League', short: 'Semi-Major', color: '#d99a00' },
+  43: { id: 43, name: '메이저 프로리그', zh: '职业联赛', cn: 'Major Pro League', short: 'Major', color: '#3d5afe' },
+  33: { id: 33, name: 'K리그', zh: 'K联赛', cn: 'K League', short: 'K League', color: '#12a150' },
+  64: { id: 64, name: '준메이저 프로리그', zh: '半职业联赛', cn: 'Semi-Major Pro League', short: 'Semi-Major', color: '#d99a00' },
 };
+/** 赛事中文名（韩文原名作为小号灰字并列） */
+function evHTML(id) {
+  const e = EVENTS[id];
+  if (!e) return '';
+  return `<b>${esc(e.zh)}</b><span class="kr-name">${esc(e.name)}</span>`;
+}
+const evZh = (id) => EVENTS[id]?.zh || '';
 const RACE_CN = { T: '人族', Z: '虫族', P: '神族' };
 const RACE_EN = { T: 'Terran', Z: 'Zerg', P: 'Protoss' };
 
@@ -285,8 +292,8 @@ async function viewHome(app) {
   app.innerHTML = `
   <section class="hero">
     <h1>韩国星际职业选手数据查询</h1>
-    <p>数据口径严格限定在 eloboard 三大赛事：<b>메이저 프로리그</b>（Major Pro League）、
-       <b>K리그</b>（K League）、<b>준메이저 프로리그</b>（Semi-Major Pro League），
+    <p>数据口径严格限定在 eloboard 三大赛事：<b>职业联赛</b>（메이저 프로리그 / Major Pro League）、
+       <b>K联赛</b>（K리그 / K League）、<b>半职业联赛</b>（준메이저 프로리그 / Semi-Major Pro League），
        且<b>仅统计 ${esc(m.cutoff || '')} 之后</b>的比赛。
        全部战绩、地图与对抗统计均基于这三个赛事的 ${nf(m.totalMatches)} 场对局重新计算；
        地图板块仅展示<b>本赛季（${esc(m.season?.label || '')}）</b>地图。</p>
@@ -304,8 +311,8 @@ async function viewHome(app) {
       ${idx.events.map((e) => `
         <a class="card event-card" href="#/players?event=${e.id}">
           <div class="eid">EVENT ${e.id}</div>
-          <h3>${esc(e.name)}</h3>
-          <div class="en">${esc(e.cn)}</div>
+          <h3>${esc(e.nameZh || e.name)}</h3>
+          <div class="en">${esc(e.name)} · ${esc(e.cn)}</div>
           <div class="erow">
             <div><b>${nf(e.matches)}</b><span>对局</span></div>
             <div><b>${nf(e.players)}</b><span>选手</span></div>
@@ -392,7 +399,7 @@ async function viewPlayers(app, params) {
     <div class="filters">
       <div class="seg" id="segEvent">
         <button data-ev="0" class="${f.event === 0 ? 'on' : ''}">全部赛事</button>
-        ${idx.events.map((e) => `<button data-ev="${e.id}" class="${f.event === e.id ? 'on' : ''}">${esc(e.name)}</button>`).join('')}
+        ${idx.events.map((e) => `<button data-ev="${e.id}" title="${esc(e.name)}" class="${f.event === e.id ? 'on' : ''}">${esc(e.nameZh || e.name)}</button>`).join('')}
       </div>
       <div class="seg race" id="segRace">
         <button data-race="" class="${f.race === '' ? 'on' : ''}">全部种族</button>
@@ -462,7 +469,7 @@ async function viewPlayers(app, params) {
 
     const cols = [
       ['name', '选手', 0], ['race', '种族', 0],
-      ['games', f.event ? EVENTS[f.event].short + ' 场次' : '出场', 1],
+      ['games', f.event ? evZh(f.event) + ' 场次' : '出场', 1],
       ['wins', '胜 / 负', 1],
       ['wr', '胜率', 1], ['eloNet', 'ELO 净变', 1], ['elo', '官方 ELO', 1],
     ];
@@ -574,7 +581,7 @@ function tabOverview(p) {
         <div class="bars" style="padding:0">
           ${p.events.map((e) => `
             <div class="bar-row">
-              <span class="lbl">${esc(e.name)}</span>
+              <span class="lbl">${evHTML(e.id)}</span>
               <span class="track"><i style="width:${(e.games / eTotal) * 100}%;background:${EVENTS[e.id].color}"></i></span>
               <span class="val">${nf(e.games)} 场 · ${e.wr.toFixed(1)}%</span>
             </div>`).join('')}
@@ -582,7 +589,7 @@ function tabOverview(p) {
         <table style="margin-top:14px">
           <thead><tr><th>赛事</th><th class="num">场次</th><th class="num">胜</th><th class="num">负</th><th class="num">胜率</th></tr></thead>
           <tbody>${p.events.map((e) => `
-            <tr><td>${esc(e.name)}</td><td class="num">${nf(e.games)}</td>
+            <tr><td>${evHTML(e.id)}</td><td class="num">${nf(e.games)}</td>
             <td class="num" style="color:var(--win)">${nf(e.wins)}</td>
             <td class="num" style="color:var(--loss)">${nf(e.losses)}</td>
             <td class="num">${e.wr.toFixed(1)}%</td></tr>`).join('')}
@@ -776,7 +783,7 @@ function tabMatches(p) {
     <div class="filters">
       <div class="seg" id="mFilter">
         <button data-ev="0" class="on">全部</button>
-        ${p.events.map((e) => `<button data-ev="${e.id}">${esc(e.short)}</button>`).join('')}
+        ${p.events.map((e) => `<button data-ev="${e.id}" title="${esc(e.name)}">${esc(e.nameZh || e.short)}</button>`).join('')}
       </div>
       <input type="search" id="mQ" placeholder="按地图 / 对手筛选（支持中文 / 韩文 / 英文 ID）…" style="min-width:280px">
       <span class="count" id="mCount">共 ${nf(total)} 场</span>
@@ -807,7 +814,7 @@ function initMatches(p) {
           </div>
           <div class="meta">
             <span>${esc(fmtDate(m.d))}</span>
-            <span>${esc(EVENTS[m.e]?.name || '')}</span>
+            <span>${esc(evZh(m.e))}</span>
             ${m.team ? `<span>${esc(m.team)} vs ${esc(m.oteam || '')}</span>` : ''}
           </div>
         </div>
@@ -964,7 +971,7 @@ async function renderH2H(aId, bId) {
           <div class="section-head"><h2 style="font-size:14.5px">分赛事交手</h2></div>
           <table><thead><tr><th>赛事</th><th class="num">场次</th><th class="num">${esc(dispName(A))}</th><th class="num">${esc(dispName(B))}</th></tr></thead>
           <tbody>${Object.entries(byEvent).map(([k, v]) => `
-            <tr><td>${esc(EVENTS[k]?.name || k)}</td><td class="num">${v.games}</td>
+            <tr><td>${evHTML(k)}</td><td class="num">${v.games}</td>
             <td class="num" style="color:var(--win);font-weight:600">${v.a}</td>
             <td class="num" style="color:var(--loss);font-weight:600">${v.b}</td></tr>`).join('')}
           </tbody></table>
@@ -978,19 +985,22 @@ async function renderH2H(aId, bId) {
 
       <div class="section">
         <div class="section-head"><h2>交手记录</h2><span class="sub">${games.length} 场${games.length > H2H_MAX ? ` · 仅显示最近 ${H2H_MAX} 场` : ''}</span></div>
-        <div class="table-wrap"><div class="mlist">
-          ${games.slice(0, H2H_MAX).map((m) => `
-            <div class="mrow">
-              <span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span>
-              <div>
-                <div class="who">${nameHTML(A)} <span class="muted">vs</span> ${nameHTML(B)}
-                  ${mapTag(m.map)}</div>
-                <div class="meta"><span>${esc(fmtDate(m.d))}</span><span>${esc(EVENTS[m.e]?.name || '')}</span>
-                  ${m.team ? `<span>${esc(m.team)} vs ${esc(m.oteam || '')}</span>` : ''}</div>
-              </div>
-              <span class="elo ${m.elo == null ? 'na' : m.elo > 0 ? 'up' : 'dn'}">${m.elo == null ? '—' : (m.elo > 0 ? '+' : '') + m.elo.toFixed(1)}</span>
-            </div>`).join('')}
-        </div></div>
+        <div class="table-wrap"><table id="h2hList">
+          <thead><tr><th></th><th>对阵</th><th>地图</th><th>日期</th><th>赛事</th><th>队伍</th><th class="num">ELO</th></tr></thead>
+          <tbody>${games.slice(0, H2H_MAX).map((m) => {
+        const win = m.w ? A : B, lose = m.w ? B : A;
+        const season = !m.map || SEASON_MAPS.has(m.map);
+        return `<tr>
+              <td><span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span></td>
+              <td>${nameHTML(win)}<span class="muted" style="margin:0 6px">vs</span><span class="muted">${nameHTML(lose)}</span></td>
+              <td>${mapHTML(mapCn(m.map), m.map)}${season ? '' : '<span class="muted" style="font-size:11px"> 非本赛季</span>'}</td>
+              <td class="muted">${esc(fmtDate(m.d))}</td>
+              <td>${EVENTS[m.e] ? evHTML(m.e) : '<span class="muted">—</span>'}</td>
+              <td class="muted">${m.team ? `${esc(m.team)} vs ${esc(m.oteam || '')}` : '—'}</td>
+              <td class="num"><span class="elo ${m.elo == null ? 'na' : m.elo > 0 ? 'up' : 'dn'}">${m.elo == null ? '—' : (m.elo > 0 ? '+' : '') + m.elo.toFixed(1)}</span></td>
+            </tr>`;
+      }).join('')}</tbody>
+        </table></div>
       </div>`}`;
   };
 
@@ -1007,6 +1017,7 @@ async function renderH2H(aId, bId) {
 async function viewMaps(app) {
   const idx = await loadIndex();
   const maps = state.maps;
+  const MU = idx.meta.matchups || ['ZvP', 'ZvT', 'PvT'];
   app.innerHTML = `
     <div class="section-head"><h2>地图情报</h2>
       <span class="sub">仅本赛季（${esc(idx.meta.season?.label || '')}）地图 · 共 ${maps.length} 张</span></div>
@@ -1015,8 +1026,23 @@ async function viewMaps(app) {
       <span class="count" id="mapCount"></span>
     </div>
     <div class="table-wrap"><table id="mapTable">
-      <thead><tr><th>#</th><th>地图</th><th class="num">总场次</th><th class="num">使用选手</th><th>出场最多选手</th></tr></thead>
-      <tbody></tbody></table></div>`;
+      <thead><tr><th>#</th><th>地图</th><th class="num">总场次</th>
+        ${MU.map((k) => `<th class="num">${esc(k)}</th>`).join('')}
+        <th class="num">同族</th></tr></thead>
+      <tbody></tbody></table></div>
+    <div class="hint" style="margin-top:10px">
+      胜率为该对抗中<b>前者</b>的胜率（ZvP = 虫族对神族的胜率，ZvT = 虫族对人族，PvT = 神族对人族）；同族对抗（ZvZ / PvP / TvT）不计胜率。
+    </div>`;
+
+  const muCell = (k, mm) => {
+    if (!mm || !mm.g) return '<span class="mu-na">—</span>';
+    const wr = mm.wr1;
+    const cls = wr >= 55 ? 'up' : wr <= 45 ? 'dn' : 'mid';
+    const [a, b] = k.split('v');
+    return `<span class="mu ${cls}" title="${esc(k)} 共 ${mm.g} 场：${esc(a)} ${mm.w1} 胜 / ${esc(b)} ${mm.w2} 胜">${wr.toFixed(1)}%
+        <span class="mu-cnt">${mm.g} 场</span>
+        <span class="mu-bar"><i style="width:${wr}%"></i></span></span>`;
+  };
 
   const draw = (q) => {
     const list = maps.filter((m) => !q || m.cn.includes(q) || m.kr.includes(q));
@@ -1026,11 +1052,9 @@ async function viewMaps(app) {
         <td><span class="rank">${i + 1}</span></td>
         <td>${mapHTML(m.cn, m.kr)}</td>
         <td class="num">${nf(m.games)}</td>
-        <td class="num">${m.players}</td>
-        <td><div style="display:flex;gap:8px;flex-wrap:wrap">${m.top.slice(0, 3).map((t) =>
-      `<a href="#/player/${t.id}" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px">
-             ${racePill(t.race)}${nameHTML(t)}<span class="muted" style="font-family:var(--mono);font-size:11px">${t.games}</span></a>`).join('')}</div></td>
-      </tr>`).join('') || '<tr><td colspan="5" class="empty">无匹配地图</td></tr>';
+        ${MU.map((k) => `<td class="num">${muCell(k, m.matchups?.[k])}</td>`).join('')}
+        <td class="num">${m.mirror ? `<span class="muted">${m.mirror}</span>` : '<span class="mu-na">—</span>'}</td>
+      </tr>`).join('') || `<tr><td colspan="${4 + MU.length}" class="empty">无匹配地图</td></tr>`;
   };
   draw('');
   $('#mapQ').oninput = (e) => draw(e.target.value);

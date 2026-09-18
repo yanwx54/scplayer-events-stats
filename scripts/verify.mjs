@@ -66,8 +66,50 @@ for (const e of [43, 33, 64]) {
 console.log(`  本赛季地图对局 ${onSeason} 场 | 非本赛季地图对局 ${offSeason} 场（按需求不计入地图板块）`);
 const maps = JSON.parse(await readFile('public/data/maps.json', 'utf8'));
 console.log('  maps.json 条数', maps.length, maps.length === idx.meta.season?.maps?.length ? '✓ 仅本赛季' : '✗');
-console.log('  maps.json 总场次', maps.reduce((a, m) => a + m.games, 0), '= 本赛季对局 ×2', onSeason * 2,
-  maps.reduce((a, m) => a + m.games, 0) === onSeason * 2 ? '✓' : '✗');
+const mapGames = maps.reduce((a, m) => a + m.games, 0);
+console.log('  maps.json 总场次', mapGames, '= 本赛季对局', onSeason, mapGames === onSeason ? '✓' : '✗');
+
+console.log('\n=== 地图对抗胜率（分种族，从原始数据独立复算）===');
+const MU = idx.meta.matchups || ['ZvP', 'ZvT', 'PvT'];
+const ORD = { Z: 0, P: 1, T: 2 };
+const rc = {};
+for (const e of [43, 33, 64]) {
+  const arr = JSON.parse(await readFile(`data/raw/event-${e}.json`, 'utf8'));
+  for (const m of arr) {
+    if (!inScope(m) || !m.map_name || !seasonAliases.has(m.map_name)) continue;
+    const [a, b] = m.participants || [];
+    if (!a || !b) continue;
+    const g = rc[m.map_name] || (rc[m.map_name] = { games: 0, mirror: 0, m2: {} });
+    g.games++;
+    if (a.race === b.race) { g.mirror++; continue; }
+    if (!(a.race in ORD) || !(b.race in ORD)) continue;
+    const label = ORD[a.race] <= ORD[b.race] ? `${a.race}v${b.race}` : `${b.race}v${a.race}`;
+    const first = ORD[a.race] <= ORD[b.race] ? a : b;
+    const mm = g.m2[label] || (g.m2[label] = { g: 0, w1: 0 });
+    mm.g++;
+    if (first.result === 'win') mm.w1++;
+  }
+}
+let muBad = 0, muMirror = 0;
+for (const mp of maps) {
+  const r = rc[mp.kr];
+  const sumG = MU.reduce((a, k) => a + (mp.matchups[k]?.g || 0), 0);
+  const okStruct = sumG + mp.mirror + mp.unknownRace === mp.games;
+  const okMirror = !!r && r.mirror === mp.mirror;
+  let okMU = true;
+  for (const k of MU) {
+    const want = r?.m2[k] || { g: 0, w1: 0 };
+    const got = mp.matchups[k] || { g: 0, w1: 0 };
+    if (want.g !== got.g || want.w1 !== got.w1 || got.w2 !== got.g - got.w1) okMU = false;
+  }
+  if (!okStruct || !okMirror || !okMU) muBad++;
+  muMirror += mp.mirror;
+  console.log(`  ${mp.cn}(${mp.kr}) ${mp.games} 场 同族${mp.mirror} | `
+    + MU.map((k) => `${k} ${mp.matchups[k].g}场 ${mp.matchups[k].wr1 == null ? '—' : mp.matchups[k].wr1 + '%'}`).join(' · ')
+    + (okStruct && okMirror && okMU ? ' ✓' : ' ✗'));
+}
+console.log(`  合计 异族 ${mapGames - muMirror} 场 + 同族 ${muMirror} 场 = ${mapGames} 场`,
+  muBad === 0 ? '✓ 全部一致' : `✗ ${muBad} 张地图不一致`);
 
 console.log('\n=== 重复检查 ===');
 const seen = new Set();

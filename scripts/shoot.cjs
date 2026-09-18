@@ -34,7 +34,7 @@ const pages = [
   ['player-34', '/#/player/34', true],
   ['player-34-maps', '/#/player/34?tab=maps', true],
   ['player-34-opp', '/#/player/34?tab=opponents', true],
-  ['h2h', '/#/h2h?a=34&b=12', false],
+  ['h2h', '/#/h2h?a=34&b=12', true],
   ['maps', '/#/maps', true],
   ['players-event43', '/#/players?event=43', true],
   ['mobile-home', '/#/', false],
@@ -182,6 +182,19 @@ const pages = [
   const h2hNames = await page.$$eval('.h2h-side b', (bs) => bs.map((b) => b.textContent.trim()));
   check('双方显示中文名（迷你 / 永镇）', h2hNames.join(',') === '迷你,永镇', h2hNames.join(','));
 
+  // 交手记录：全部信息压缩成一行（表格），不再用两行 .mrow 布局
+  const recRows = await page.locator('#h2hList tbody tr').count();
+  check(`交手记录行数 = 交战场次 ${h2hGames.length}`, recRows === Math.min(h2hGames.length, 200), `${recRows} 行`);
+  const recCells = await page.$$eval('#h2hList tbody tr:first-child td', (tds) => tds.length);
+  check('交手记录每行 7 列（结果/对阵/地图/日期/赛事/队伍/ELO）', recCells === 7, `${recCells} 列`);
+  check('交手记录已无两行布局（.mrow）', (await page.locator('#h2hBody .mrow').count()) === 0);
+  check('交手记录含结果徽标', (await page.locator('#h2hList tbody tr:first-child td .res').count()) === 1);
+  const recTxt = await page.locator('#h2hList tbody tr:first-child').innerText();
+  console.log(`    首行: ${recTxt.replace(/\n/g, ' | ')}`);
+  check('交手记录赛事显示中文名', /职业联赛|K联赛|半职业联赛/.test(recTxt), recTxt.replace(/\n/g, ' ').slice(0, 70));
+  check('交手记录每行只占一行文本高度（无第二行 meta）',
+    recTxt.split('\n').length <= 7, `${recTxt.split('\n').length} 行文本`);
+
   // 分地图交手只应包含本赛季地图
   const seasonAliases = new Set(idxJson.meta.season.aliases);
   const mapRowsKr = await page.$$eval('#h2hMapTable tbody tr', (trs) => trs.map((tr) => {
@@ -234,6 +247,33 @@ const pages = [
   }));
   check('每行都有中文译名（中文名 + 韩文原名）', mapKr.length === mapCount && mapKr.every((k) => seasonAliases.has(k)),
     mapKr.join(' / '));
+
+  // 地图情报：改为「总场次 + 分种族对抗胜率」，不再显示选手出场次数
+  const mapHeads = await page.$$eval('#mapTable thead th', (ths) => ths.map((t) => t.textContent.trim()));
+  check('地图情报表头含 ZvP / ZvT / PvT',
+    ['ZvP', 'ZvT', 'PvT'].every((k) => mapHeads.includes(k)), mapHeads.join(' / '));
+  check('地图情报不再显示「使用选手」「出场最多选手」',
+    !mapHeads.some((h) => h.includes('选手')), mapHeads.join(' / '));
+  const mapsJson = JSON.parse(fs.readFileSync(path.join(DATA, 'maps.json'), 'utf8'));
+  const byKr = new Map(mapsJson.map((m) => [m.kr, m]));
+  const mapStats = await page.$$eval('#mapTable tbody tr', (trs) => trs.map((tr) => {
+    const cells = [...tr.querySelectorAll('td')];
+    return {
+      kr: tr.querySelector('.kr-name')?.textContent.trim() || '',
+      games: cells[2].innerText.trim(),
+      mu: cells.slice(3, 6).map((td) => td.innerText.trim().split('\n')[0]),
+    };
+  }));
+  const muOk = mapStats.every((s) => {
+    const m = byKr.get(s.kr);
+    if (!m) return false;
+    if (s.games !== String(m.games)) return false;
+    return ['ZvP', 'ZvT', 'PvT'].every((k, i) => (m.matchups[k].g === 0
+      ? s.mu[i] === '—'
+      : s.mu[i] === m.matchups[k].wr1.toFixed(1) + '%'));
+  });
+  check('地图情报每格胜率/场次与 maps.json 一致', muOk,
+    mapStats.map((s) => `${s.kr}:${s.mu.join(' ')}`).join(' | ').slice(0, 120));
 
   /* ---------- 选手详情 tabs ---------- */
   console.log('\n=== 选手详情 tabs ===');

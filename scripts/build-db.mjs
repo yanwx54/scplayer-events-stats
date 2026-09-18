@@ -22,11 +22,21 @@ const OUT = path.join(ROOT, 'public', 'data');
 const CUTOFF = process.env.CUTOFF || '2026-01-01';
 
 const EVENTS = [
-  { id: 43, name: '메이저 프로리그', nameCn: 'Major Pro League', short: '메프로', shortCn: 'Major' },
-  { id: 33, name: 'K리그', nameCn: 'K League', short: 'K리그', shortCn: 'K League' },
-  { id: 64, name: '준메이저 프로리그', nameCn: 'Semi-Major Pro League', short: '준메프로', shortCn: 'Semi-Major' },
+  { id: 43, name: '메이저 프로리그', nameZh: '职业联赛', nameCn: 'Major Pro League', short: '메프로', shortCn: 'Major' },
+  { id: 33, name: 'K리그', nameZh: 'K联赛', nameCn: 'K League', short: 'K리그', shortCn: 'K League' },
+  { id: 64, name: '준메이저 프로리그', nameZh: '半职业联赛', nameCn: 'Semi-Major Pro League', short: '준메프로', shortCn: 'Semi-Major' },
 ];
 const EVENT_IDS = EVENTS.map((e) => e.id);
+
+/** 种族对抗的规范顺序：Z < P < T，两两组合得到 ZvP / ZvT / PvT */
+const RACE_ORDER = { Z: 0, P: 1, T: 2 };
+const MATCHUPS = ['ZvP', 'ZvT', 'PvT'];
+const matchupOf = (r1, r2) => {
+  if (!r1 || !r2 || !(r1 in RACE_ORDER) || !(r2 in RACE_ORDER)) return null;
+  const a = RACE_ORDER[r1] <= RACE_ORDER[r2] ? r1 : r2;
+  const b = a === r1 ? r2 : r1;
+  return `${a}v${b}`;
+};
 
 /* ============================================================
    地图译名（依据 docs/地图翻译规则.md）
@@ -175,10 +185,33 @@ const bump = (obj, key, isWin) => {
 };
 
 /* ---------- 逐场累计 ---------- */
+/** 地图维度（只统计本赛季地图）：总场次 + 分种族对抗胜负 */
+const mapAgg = {};
 for (const m of matches) {
   const [a, b] = m.participants;
   const date = m.played_on || null;
   const month = date ? date.slice(0, 7) : null;
+
+  if (isSeasonMap(m.map_name)) {
+    const g = mapAgg[m.map_name] || (mapAgg[m.map_name] = {
+      kr: m.map_name, cn: mapCnOf(m.map_name) || m.map_name,
+      games: 0, mirror: 0, unknownRace: 0, m2: {},
+    });
+    g.games++;
+    const label = matchupOf(a.race, b.race);
+    if (!label) {
+      g.unknownRace++;
+    } else if (a.race === b.race) {
+      g.mirror++;                       // 同族对抗（ZvZ / PvP / TvT）：胜负各半，不统计胜率
+    } else {
+      // 规范顺序下先出现的一方为 w1
+      const first = RACE_ORDER[a.race] <= RACE_ORDER[b.race] ? a : b;
+      const mm = g.m2[label] || (g.m2[label] = { g: 0, w1: 0, w2: 0 });
+      mm.g++;
+      if (first.result === 'win') mm.w1++; else mm.w2++;
+    }
+  }
+
   for (const [me, opp] of [[a, b], [b, a]]) {
     const pl = P.get(me.player_id);
     if (!pl) continue;
@@ -220,7 +253,6 @@ await rm(path.join(OUT, 'players'), { recursive: true, force: true });
 await mkdir(path.join(OUT, 'players'), { recursive: true });
 
 const index = [];
-const globalMap = {};
 const globalMonth = {};
 
 for (const pl of P.values()) {
@@ -252,7 +284,7 @@ for (const pl of P.values()) {
   const eventList = EVENTS.map((e) => {
     const v = pl.byEvent[e.id];
     return {
-      id: e.id, name: e.name, nameCn: e.nameCn, short: e.short,
+      id: e.id, name: e.name, nameZh: e.nameZh, nameCn: e.nameCn, short: e.short,
       games: v?.games || 0, wins: v?.wins || 0, losses: v?.losses || 0,
       wr: v ? wr(v.wins, v.games) : 0,
     };
@@ -277,12 +309,6 @@ for (const pl of P.values()) {
   };
   await writeFile(path.join(OUT, 'players', `${pl.id}.json`), JSON.stringify(detail));
 
-  for (const m of pl.matches) {
-    if (!isSeasonMap(m.map)) continue;   // 地图情报只统计本赛季地图
-    const g = globalMap[m.map] || (globalMap[m.map] = { kr: m.map, cn: mapCnOf(m.map) || m.map, games: 0, players: {} });
-    g.games++;
-    g.players[pl.id] = (g.players[pl.id] || 0) + 1;
-  }
   for (const mo of monthly) {
     const g = globalMonth[mo.m] || (globalMonth[mo.m] = { m: mo.m, games: 0, players: new Set() });
     g.games += mo.games;
@@ -308,15 +334,24 @@ for (const pl of P.values()) {
 
 index.sort((a, b) => b.games - a.games);
 
-/* ---------- 地图榜 ---------- */
-const maps = Object.values(globalMap).map((g) => {
-  const top = Object.entries(g.players)
-    .map(([id, games]) => ({ id: Number(id), games }))
-    .sort((a, b) => b.games - a.games)
-    .slice(0, 5)
-    .map((x) => ({ ...x, name: P.get(x.id)?.name, cn: P.get(x.id)?.cn || null, race: P.get(x.id)?.race }));
-  return { kr: g.kr, cn: g.cn, games: g.games, players: Object.keys(g.players).length, top };
+/* ---------- 地图榜：总场次 + 分种族对抗胜率（不展示选手出场数据） ---------- */
+const maps = Object.values(mapAgg).map((g) => {
+  const matchups = {};
+  for (const label of MATCHUPS) {
+    const mm = g.m2[label];
+    matchups[label] = mm
+      ? { g: mm.g, w1: mm.w1, w2: mm.w2, wr1: wr(mm.w1, mm.g) }
+      : { g: 0, w1: 0, w2: 0, wr1: null };
+  }
+  return { kr: g.kr, cn: g.cn, games: g.games, mirror: g.mirror, unknownRace: g.unknownRace, matchups };
 }).sort((a, b) => b.games - a.games);
+
+// 自检：每张地图「三项异族对抗 + 同族 + 未标注种族」应等于总场次
+for (const mp of maps) {
+  const sum = MATCHUPS.reduce((a, k) => a + mp.matchups[k].g, 0) + mp.mirror + mp.unknownRace;
+  if (sum !== mp.games) console.error(`✗ 地图 ${mp.kr} 对抗场次合计 ${sum} ≠ 总场次 ${mp.games}`);
+}
+const mapGamesTotal = maps.reduce((a, m) => a + m.games, 0);
 
 /* ---------- 月度活动 ---------- */
 const months = Object.values(globalMonth).map((g) => ({ m: g.m, games: g.games, players: g.players.size }))
@@ -328,7 +363,7 @@ const eventMeta = EVENTS.map((e) => {
   const dates = ms.map((m) => m.played_on).filter(Boolean).sort();
   const ps = new Set(ms.flatMap((m) => m.participants.map((p) => p.player_id)));
   return {
-    id: e.id, name: e.name, nameCn: e.nameCn, short: e.short, shortCn: e.shortCn,
+    id: e.id, name: e.name, nameZh: e.nameZh, nameCn: e.nameCn, short: e.short, shortCn: e.shortCn,
     matches: ms.length, players: ps.size, first: dates[0] || null, last: dates.at(-1) || null,
     url: `https://eloboard.com/events/${e.id}`,
   };
@@ -351,6 +386,8 @@ const index_out = {
       aliases: [...SEASON_MAP_ALIASES],
       maps: SEASON_MAP_ROWS.map((r) => ({ kr: r.kr[0], cn: r.cn, en: r.en })),
     },
+    // 地图情报的种族对抗列（前者视角胜率）
+    matchups: MATCHUPS,
   },
   events: eventMeta,
   mapCn: MAP_CN,
@@ -390,5 +427,7 @@ console.log('players written:', index.length);
 console.log('meta:', JSON.stringify(index_out.meta));
 console.log('events:', JSON.stringify(eventMeta));
 console.log('top10:', index.slice(0, 10).map((p) => `${p.name}(${p.race}) ${p.games}场 ${p.wr}%`).join(' | '));
-console.log('top maps:', maps.slice(0, 5).map((m) => `${m.cn} ${m.games}`).join(' | '));
+console.log('top maps:', maps.slice(0, 5).map((m) =>
+  `${m.cn} ${m.games}场 [${MATCHUPS.map((k) => `${k} ${m.matchups[k].wr1 ?? '—'}%`).join(' ')} 同族${m.mirror}]`).join(' | '));
+console.log('地图总场次:', mapGamesTotal, '| 同族合计:', maps.reduce((a, m) => a + m.mirror, 0));
 console.log('months:', months.length, months[0]?.m, '~', months.at(-1)?.m);

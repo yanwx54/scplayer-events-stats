@@ -4,6 +4,7 @@
  * 用法：
  *   node scripts/git-backup.mjs            # 有变更才提交推送
  *   node scripts/git-backup.mjs --force    # 无变更也推一次（同步追踪引用）
+ *   node scripts/git-backup.mjs --msg "feat: xxx"   # 指定提交信息（手工提交时用）
  *
  * 处理了几个坑：
  *   - 无变更时直接跳过，不产生空提交
@@ -17,6 +18,11 @@ import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FORCE = process.argv.includes('--force');
+/** 手工提交时可用 --msg 覆盖默认的「同步 YYYY-MM-DD」信息 */
+const CUSTOM_MSG = (() => {
+  const i = process.argv.indexOf('--msg');
+  return i >= 0 ? (process.argv[i + 1] || '').trim() : '';
+})();
 const git = (args, opts = {}) =>
   execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', ...opts }).trim();
 
@@ -63,7 +69,7 @@ if (hasChanges) {
   const stat = tryGit(['diff', '--cached', '--shortstat']).out;
   const d = new Date();
   const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const msg = [
+  const msg = CUSTOM_MSG || [
     `${commitType(files)}: 同步 ${stamp}`,
     '',
     stat || `${files.length} 个文件变更`,
