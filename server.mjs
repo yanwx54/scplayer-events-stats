@@ -1,6 +1,9 @@
 /**
  * 零依赖静态服务器（本地预览 / 部署均可用）。
  * 用法：node server.mjs [port]   默认 5178
+ *
+ * 监听地址：本地默认 127.0.0.1；当通过环境变量 PORT 传入端口时（部署沙箱的做法）
+ * 自动改为 0.0.0.0，否则外部反向代理无法访问。也可用 HOST 显式指定。
  */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
@@ -9,6 +12,7 @@ import path from 'node:path';
 
 const ROOT = path.join(import.meta.dirname, 'public');
 const PORT = Number(process.argv[2] || process.env.PORT || 5178);
+const HOST = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -38,6 +42,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`SC 选手数据查询 → http://127.0.0.1:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`SC 选手数据查询 → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
 });
