@@ -24,6 +24,9 @@ const state = {
   h2h: { a: null, b: null, from: null, to: null },
 };
 
+let P_BY_ID = new Map();      // id → 选手索引项（含 cn / idEn）
+let SEASON_MAPS = new Set();  // 本赛季地图的全部韩文别名（地图板块只展示这些）
+
 /* ---------- 工具 ---------- */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -49,6 +52,48 @@ function toast(msg) {
 }
 function fmtDate(d) { return d || '—'; }
 
+/* ---------- 选手名：文档内用中文名，其余保留韩文原名 ---------- */
+const norm = (s) => String(s ?? '').replace(/\s+/g, '').toLowerCase();
+/** 展示名：有中文名用中文名，否则用韩文原名 */
+const dispName = (p) => (p ? (p.cn || p.name || '') : '');
+/** 中文名 + 小号韩文原名（无中文名时只显示韩文）；悬停可见 韩文名 / 英文 ID */
+function nameHTML(p) {
+  if (!p) return '';
+  const cn = p.cn, kr = p.name || '';
+  const tip = esc([kr, p.idEn].filter(Boolean).join(' / '));
+  if (!cn || cn === kr) return `<b title="${tip}">${esc(kr)}</b>`;
+  return `<b title="${tip}">${esc(cn)}</b><span class="kr-name" title="${tip}">${esc(kr)}</span>`;
+}
+/** 选手搜索：支持 韩文名 / 中文名 / 英文 ID / 数字 ID */
+function matchPlayer(p, q) {
+  if (!p) return false;
+  const s = String(q ?? '').trim();
+  if (!s) return true;
+  if (String(p.id) === s) return true;
+  const n = norm(s);
+  return norm(p.name).includes(n)
+    || (!!p.cn && norm(p.cn).includes(n))
+    || (!!p.idEn && norm(p.idEn).includes(n));
+}
+/** 地图名：中文名 + 小号韩文（未收录译名时只显示韩文） */
+function mapHTML(cn, kr) {
+  const c = cn || kr || '未知地图', k = kr || '';
+  return k && c !== k
+    ? `<b>${esc(c)}</b><span class="kr-name">${esc(k)}</span>`
+    : `<b>${esc(c)}</b>`;
+}
+const mapCn = (kr) => state.index?.mapCn?.[kr] || kr || '未知地图';
+
+/** 对局记录中的地图标签：中文名 + 小号韩文；非本赛季地图额外标注 */
+function mapTag(kr) {
+  const c = mapCn(kr), k = kr || '';
+  const season = !k || SEASON_MAPS.has(k);
+  const krPart = k && c !== k ? `<span class="kr-name">${esc(k)}</span>` : '';
+  return `<span class="mapname"${season ? '' : ' title="非本赛季地图，不计入地图统计"'}>· ${esc(c)}${krPart}${season ? '' : ' <span class="muted">·非本赛季</span>'}</span>`;
+}
+/** 地图搜索文本（韩文 + 中文） */
+const mapSearchText = (kr) => norm(`${kr || ''} ${mapCn(kr)}`);
+
 /* ---------- 数据加载 ---------- */
 async function loadIndex() {
   if (state.index) return state.index;
@@ -58,6 +103,8 @@ async function loadIndex() {
   ]);
   state.index = idx;
   state.maps = maps;
+  P_BY_ID = new Map(idx.players.map((p) => [p.id, p]));
+  SEASON_MAPS = new Set(idx.meta.season?.aliases || []);
   return idx;
 }
 async function loadPlayer(id) {
@@ -239,12 +286,14 @@ async function viewHome(app) {
   <section class="hero">
     <h1>韩国星际职业选手数据查询</h1>
     <p>数据口径严格限定在 eloboard 三大赛事：<b>메이저 프로리그</b>（Major Pro League）、
-       <b>K리그</b>（K League）、<b>준메이저 프로리그</b>（Semi-Major Pro League）。
-       全部战绩、地图与对抗统计均基于这三个赛事的 ${nf(m.totalMatches)} 场对局重新计算。</p>
+       <b>K리그</b>（K League）、<b>준메이저 프로리그</b>（Semi-Major Pro League），
+       且<b>仅统计 ${esc(m.cutoff || '')} 之后</b>的比赛。
+       全部战绩、地图与对抗统计均基于这三个赛事的 ${nf(m.totalMatches)} 场对局重新计算；
+       地图板块仅展示<b>本赛季（${esc(m.season?.label || '')}）</b>地图。</p>
     <div class="hero-stats">
       <div class="hero-stat"><b>${nf(m.totalMatches)}</b><span>对局总数</span></div>
       <div class="hero-stat"><b>${nf(m.totalPlayers)}</b><span>参赛选手</span></div>
-      <div class="hero-stat"><b>${nf(m.totalMaps)}</b><span>使用地图</span></div>
+      <div class="hero-stat"><b>${nf(m.totalMaps)}</b><span>本赛季地图</span></div>
       <div class="hero-stat"><b>${esc(m.first)}<br>${esc(m.last)}</b><span>数据跨度</span></div>
     </div>
   </section>
@@ -273,7 +322,7 @@ async function viewHome(app) {
       <tbody>${top.map((p, i) => `
         <tr class="clickable" onclick="location.hash='#/player/${p.id}'">
           <td><span class="rank">${i + 1}</span></td>
-          <td><div class="pname">${avatar(p)}${esc(p.name)}</div></td>
+          <td><div class="pname">${avatar(p)}${nameHTML(p)}</div></td>
           <td>${racePill(p.race)}</td>
           <td class="num">${nf(p.games)}</td>
           <td class="num" style="color:var(--win)">${nf(p.wins)}</td>
@@ -312,7 +361,7 @@ function miniList(list, valFn) {
     <div class="mrow" style="grid-template-columns:26px 1fr auto" ${p.avatar !== undefined ? `onclick="location.hash='#/player/${p.id}'" style="cursor:pointer"` : ''}>
       <span class="rank">${i + 1}</span>
       <div>${p.avatar !== undefined
-        ? `<div class="who"><b>${esc(p.name)}</b>${p.race ? racePill(p.race) : ''}</div>`
+        ? `<div class="who">${nameHTML(p)}${p.race ? racePill(p.race) : ''}</div>`
         : `<div class="who"><b>${esc(p.name)}</b><span class="muted" style="font-size:11.5px">${esc(p._sub || '')}</span></div>`}</div>
       <span class="num" style="font-weight:600">${valFn(p)}</span>
     </div>`).join('')}</div>`;
@@ -351,7 +400,7 @@ async function viewPlayers(app, params) {
         <button data-race="Z" class="${f.race === 'Z' ? 'on' : ''}">虫族 Z</button>
         <button data-race="P" class="${f.race === 'P' ? 'on' : ''}">神族 P</button>
       </div>
-      <input type="search" id="q" placeholder="搜索选手名…" value="${esc(f.q)}" style="min-width:170px">
+      <input type="search" id="q" placeholder="搜索选手（中文 / 韩文 / 英文 ID）…" value="${esc(f.q)}" style="min-width:230px">
       <div class="seg" id="segMin">
         ${[[0, '全部'], [100, '≥100场'], [500, '≥500场'], [1000, '≥1000场']].map(([v, t]) =>
     `<button data-min="${v}" class="${f.min === v ? 'on' : ''}">${t}</button>`).join('')}
@@ -398,8 +447,9 @@ async function viewPlayers(app, params) {
     const rows = idx.players
       .filter((p) => (!f.race || p.race === f.race))
       .map((p) => ({ p, v: view(p) }))
+      .filter((x) => x.v.games > 0)   // 当前「赛事 + 时间段」下没有出场的选手不进入排行
       .filter((x) => x.v.games >= f.min)
-      .filter((x) => !f.q || x.p.name.includes(f.q) || String(x.p.id) === f.q)
+      .filter((x) => matchPlayer(x.p, f.q))
       .sort((A, B) => {
         const k = state.playerSort.key, d = state.playerSort.dir;
         let va, vb;
@@ -424,7 +474,7 @@ async function viewPlayers(app, params) {
         <tbody>${rows.slice(0, 400).map((x, i) => { const { p, v } = x; return `
           <tr class="clickable" onclick="location.hash='#/player/${p.id}'">
             <td><span class="rank">${i + 1}</span></td>
-            <td><div class="pname">${avatar(p)}${esc(p.name)}</div></td>
+            <td><div class="pname">${avatar(p)}${nameHTML(p)}</div></td>
             <td>${racePill(p.race)}</td>
             <td class="num">${nf(v.games)}</td>
             <td class="num"><span style="color:var(--win)">${nf(v.wins)}</span> / <span style="color:var(--loss)">${nf(v.losses)}</span></td>
@@ -432,7 +482,8 @@ async function viewPlayers(app, params) {
             <td class="num" style="color:${(v.eloNet ?? 0) >= 0 ? 'var(--win)' : 'var(--loss)'}">${v.eloNet == null ? '—' : (v.eloNet > 0 ? '+' : '') + v.eloNet.toFixed(1)}</td>
             <td class="num">${p.elo ? p.elo.toFixed(1) : '—'}</td>
             <td class="num">${p.recentGames ? `${p.recentWins} / ${p.recentGames}` : '—'}</td>
-          </tr>`; }).join('')}</tbody>
+          </tr>`; }).join('')
+          || `<tr><td colspan="${cols.length + 2}" class="empty">当前「赛事 + 时间段」下没有比赛记录</td></tr>`}</tbody>
       </table></div>
       ${rows.length > 400 ? `<div class="hint" style="padding:10px">仅显示前 400 名，请使用筛选缩小范围。</div>` : ''}
       ${rangeActive ? `<div class="hint" style="padding:0 10px 10px">已按时间段 ${esc(f.from)} ~ ${esc(f.to)} 统计（覆盖 ${hi - lo + 1} 个比赛日）</div>` : ''}`;
@@ -466,9 +517,10 @@ async function viewPlayer(app, id, params) {
     <div class="card profile">
       ${avatar(p, 'big-av')}
       <div class="pinfo">
-        <h1>${esc(p.name)} ${racePill(p.race)}</h1>
+        <h1>${esc(dispName(p))}${p.cn && p.cn !== p.name ? ` <span class="kr-name" style="font-size:15px">${esc(p.name)}</span>` : ''} ${racePill(p.race)}</h1>
         <div class="pmeta">
-          <span>ID #${p.id}</span>
+          ${p.idEn ? `<span>ID <b style="font-family:var(--mono)">${esc(p.idEn)}</b></span>` : ''}
+          <span>#${p.id}</span>
           ${p.college ? `<span>· ${esc(p.college)}</span>` : ''}
           ${p.elo ? `<span>· 官方 ELO <b style="font-family:var(--mono)">${p.elo.toFixed(1)}</b></span>` : ''}
           ${p.lastPlayed ? `<span>· 最近出场 ${esc(p.lastPlayed)}</span>` : ''}
@@ -572,7 +624,11 @@ function tabOverview(p) {
     </div>`;
 }
 
-function oppName(id) { return state.index?.players.find((p) => p.id === id)?.name || '#' + id; }
+function oppPlayer(id) { return P_BY_ID.get(Number(id)) || null; }
+function oppName(id) {
+  const p = oppPlayer(id);
+  return p ? (p.cn || p.name) : '#' + id;
+}
 
 function drawTrend(p) {
   const host = $('#trend'); if (!host) return;
@@ -636,17 +692,19 @@ function drawTrend(p) {
 }
 
 function tabMaps(p) {
+  const label = state.index?.meta?.season?.label || '';
   return `<div class="table-wrap"><table>
     <thead><tr><th>#</th><th>地图</th><th class="num">场次</th><th class="num">胜</th><th class="num">负</th><th class="num">胜率</th></tr></thead>
     <tbody>${p.maps.map((m, i) => `
       <tr><td><span class="rank">${i + 1}</span></td>
-      <td><b>${esc(m.cn)}</b> <span class="muted" style="font-size:11.5px">${esc(m.kr)}</span></td>
+      <td>${mapHTML(m.cn, m.kr)}</td>
       <td class="num">${nf(m.games)}</td>
       <td class="num" style="color:var(--win)">${nf(m.wins)}</td>
       <td class="num" style="color:var(--loss)">${nf(m.losses)}</td>
-      <td class="num">${wrCell(m.wr)}</td></tr>`).join('')}
+      <td class="num">${wrCell(m.wr)}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="empty">该选手在本赛季地图上暂无记录</td></tr>'}
     </tbody></table></div>
-    <div class="hint" style="padding:10px">共 ${p.maps.length} 张地图（仅统计该选手在这三个赛事中使用过的地图）</div>`;
+    <div class="hint" style="padding:10px">共 ${p.maps.length} 张地图 · 仅展示本赛季（${esc(label)}）地图</div>`;
 }
 
 function tabMatchup(p) {
@@ -662,7 +720,8 @@ function tabMatchup(p) {
         </tbody></table>
       </div>
       <div class="card" style="padding:17px">
-        <div class="section-head"><h2 style="font-size:14.5px">地图胜率分布</h2><span class="sub">≥10 场</span></div>
+        <div class="section-head"><h2 style="font-size:14.5px">地图胜率分布</h2>
+          <span class="sub">≥10 场 · 仅本赛季地图</span></div>
         <div class="bars" style="padding:0;max-height:420px;overflow-y:auto">
           ${p.maps.filter((m) => m.games >= 10).map((m) => `
             <div class="bar-row" style="grid-template-columns:120px 1fr 88px">
@@ -678,7 +737,7 @@ function tabMatchup(p) {
 function tabOpponents(p) {
   return `
     <div class="filters">
-      <input type="search" id="oppQ" placeholder="筛选对手名…" style="min-width:180px">
+      <input type="search" id="oppQ" placeholder="筛选对手（中文 / 韩文 / 英文 ID）…" style="min-width:240px">
       <span class="count">共 ${p.opponents.length} 位交手过的对手</span>
     </div>
     <div class="table-wrap"><table id="oppTable">
@@ -688,11 +747,11 @@ function tabOpponents(p) {
 
 function initOpponents(p) {
   const draw = (q) => {
-    const list = p.opponents.filter((o) => !q || o.name.includes(q));
+    const list = p.opponents.filter((o) => matchPlayer(o, q));
     $('#oppTable tbody').innerHTML = list.map((o, i) => `
       <tr class="clickable" onclick="location.hash='#/h2h?a=${p.id}&b=${o.id}'" title="点击查看双方对战">
         <td><span class="rank">${i + 1}</span></td>
-        <td><div class="pname">${avatar(o)}${esc(o.name)}</div></td>
+        <td><div class="pname">${avatar(o)}${nameHTML(o)}</div></td>
         <td>${racePill(o.race)}</td>
         <td class="num">${nf(o.games)}</td>
         <td class="num" style="color:var(--win)">${nf(o.wins)}</td>
@@ -719,7 +778,7 @@ function tabMatches(p) {
         <button data-ev="0" class="on">全部</button>
         ${p.events.map((e) => `<button data-ev="${e.id}">${esc(e.short)}</button>`).join('')}
       </div>
-      <input type="search" id="mQ" placeholder="按地图 / 对手筛选…" style="min-width:190px">
+      <input type="search" id="mQ" placeholder="按地图 / 对手筛选（支持中文 / 韩文 / 英文 ID）…" style="min-width:280px">
       <span class="count" id="mCount">共 ${nf(total)} 场</span>
     </div>
     <div class="table-wrap"><div class="mlist" id="mList"></div></div>
@@ -729,8 +788,9 @@ function tabMatches(p) {
 function initMatches(p) {
   let filt = { ev: 0, q: '' };
   const draw = () => {
+    const q = norm(filt.q);
     const list = p.matches.filter((m) => (!filt.ev || m.e === filt.ev)
-      && (!filt.q || (m.map || '').includes(filt.q) || oppName(m.o).includes(filt.q)));
+      && (!q || mapSearchText(m.map).includes(q) || matchPlayer(oppPlayer(m.o), filt.q)));
     const pg = Math.ceil(list.length / PAGE_SIZE) || 1;
     const c = Math.min(state.detailPage, pg - 1);
     const sl = list.slice(c * PAGE_SIZE, c * PAGE_SIZE + PAGE_SIZE);
@@ -741,9 +801,9 @@ function initMatches(p) {
         <div>
           <div class="who">
             <span class="muted" style="font-size:12px">vs</span>
-            <b style="cursor:pointer" onclick="location.hash='#/player/${m.o}'">${esc(oppName(m.o))}</b>
+            <span style="cursor:pointer" onclick="location.hash='#/player/${m.o}'">${oppPlayer(m.o) ? nameHTML(oppPlayer(m.o)) : `<b>#${m.o}</b>`}</span>
             ${m.or ? racePill(m.or) : ''}
-            <span class="mapname">· ${esc(state.index?.mapCn?.[m.map] || m.map || '未知地图')}</span>
+            ${mapTag(m.map)}
           </div>
           <div class="meta">
             <span>${esc(fmtDate(m.d))}</span>
@@ -783,16 +843,16 @@ async function viewH2H(app, params) {
     <div class="card" style="padding:22px">
       <div class="h2h-pick">
         <div class="picker">
-          <input type="search" id="pickA" placeholder="搜索选手 A…" autocomplete="off" value="${esc(idx.players.find((p) => p.id === Number(a))?.name || '')}">
+          <input type="search" id="pickA" placeholder="搜索选手 A（中文 / 韩文 / 英文 ID）…" autocomplete="off" value="${esc(dispName(idx.players.find((p) => p.id === Number(a))))}">
           <div class="dropdown" id="ddA" style="display:none"></div>
         </div>
         <div class="vs">VS</div>
         <div class="picker">
-          <input type="search" id="pickB" placeholder="搜索选手 B…" autocomplete="off" value="${esc(idx.players.find((p) => p.id === Number(b))?.name || '')}">
+          <input type="search" id="pickB" placeholder="搜索选手 B（中文 / 韩文 / 英文 ID）…" autocomplete="off" value="${esc(dispName(idx.players.find((p) => p.id === Number(b))))}">
           <div class="dropdown" id="ddB" style="display:none"></div>
         </div>
       </div>
-      <div class="hint" style="margin-top:16px">提示：在选手详情页的「对手」标签中点击任意对手，也可直接跳转到双方对战。</div>
+      <div class="hint" style="margin-top:16px">提示：支持中文名、韩文名、英文 ID 或数字 ID 搜索；在选手详情页的「对手」标签中点击任意对手，也可直接跳转到双方对战。</div>
     </div>
     <div id="h2hResult" style="margin-top:20px"></div>`;
 
@@ -801,14 +861,14 @@ async function viewH2H(app, params) {
     const show = () => {
       const q = input.value.trim();
       const list = idx.players
-        .filter((p) => !q || p.name.includes(q) || String(p.id) === q)
+        .filter((p) => matchPlayer(p, q))
         .sort((x, y) => y.games - x.games).slice(0, 40);
-      dd.innerHTML = list.map((p) => `<div data-id="${p.id}">${avatar(p)}<b>${esc(p.name)}</b>${racePill(p.race)}<span class="rr">${nf(p.games)} 场</span></div>`).join('')
+      dd.innerHTML = list.map((p) => `<div data-id="${p.id}">${avatar(p)}${nameHTML(p)}${racePill(p.race)}<span class="rr">${nf(p.games)} 场</span></div>`).join('')
         || '<div class="muted" style="padding:10px">无匹配</div>';
       dd.style.display = 'block';
       $$('div[data-id]', dd).forEach((el) => el.onclick = () => {
         dd.style.display = 'none';
-        input.value = idx.players.find((p) => p.id === Number(el.dataset.id)).name;
+        input.value = dispName(idx.players.find((p) => p.id === Number(el.dataset.id)));
         onPick(Number(el.dataset.id));
       });
     };
@@ -861,15 +921,18 @@ async function renderH2H(aId, bId) {
       (byEvent[ek] || (byEvent[ek] = { games: 0, a: 0, b: 0 })).games++;
       byEvent[ek][g.w ? 'a' : 'b']++;
     }
+    // 分地图交手只统计本赛季地图
     const mapRows = Object.entries(byMap)
-      .map(([k, v]) => ({ kr: k, cn: state.index?.mapCn?.[k] || k, ...v }))
+      .filter(([k]) => SEASON_MAPS.has(k))
+      .map(([k, v]) => ({ kr: k, cn: mapCn(k), ...v }))
       .sort((x, y) => y.games - x.games);
+    const offSeason = Object.keys(byMap).length - mapRows.length;
 
     $('#h2hBody').innerHTML = `
       <div class="card h2h-head">
         <div class="h2h-side">
           ${avatar(A, 'big-av')}
-          <b>${esc(A.name)}</b>${racePill(A.race)}
+          ${nameHTML(A)}${racePill(A.race)}
           <span class="muted" style="font-size:12px">三赛事 ${nf(A.games)} 场 · ${A.wr.toFixed(1)}%</span>
         </div>
         <div>
@@ -878,7 +941,7 @@ async function renderH2H(aId, bId) {
         </div>
         <div class="h2h-side">
           ${avatar(B, 'big-av')}
-          <b>${esc(B.name)}</b>${racePill(B.race)}
+          ${nameHTML(B)}${racePill(B.race)}
           <span class="muted" style="font-size:12px">三赛事 ${nf(B.games)} 场 · ${B.wr.toFixed(1)}%</span>
         </div>
       </div>
@@ -886,18 +949,20 @@ async function renderH2H(aId, bId) {
       ${games.length === 0 ? `<div class="empty">该时间段内没有交手记录${allGames.length ? `（全部时间共 ${allGames.length} 场）` : ''}</div>` : `
       <div class="grid c2" style="margin-top:16px">
         <div class="card" style="padding:17px">
-          <div class="section-head"><h2 style="font-size:14.5px">分地图交手</h2><span class="sub">${mapRows.length} 张地图</span></div>
-          <table><thead><tr><th>地图</th><th class="num">场次</th><th class="num">${esc(A.name)}</th><th class="num">${esc(B.name)}</th></tr></thead>
+          <div class="section-head"><h2 style="font-size:14.5px">分地图交手</h2>
+            <span class="sub">${mapRows.length} 张本赛季地图${offSeason ? ` · 另有 ${offSeason} 张非本赛季地图未计入` : ''}</span></div>
+          <table id="h2hMapTable"><thead><tr><th>地图</th><th class="num">场次</th><th class="num">${esc(dispName(A))}</th><th class="num">${esc(dispName(B))}</th></tr></thead>
           <tbody>${mapRows.map((m) => `
-            <tr><td><b>${esc(m.cn)}</b> <span class="muted" style="font-size:11px">${esc(m.kr)}</span></td>
+            <tr><td>${mapHTML(m.cn, m.kr)}</td>
             <td class="num">${m.games}</td>
             <td class="num" style="color:var(--win);font-weight:600">${m.a}</td>
-            <td class="num" style="color:var(--loss);font-weight:600">${m.b}</td></tr>`).join('')}
+            <td class="num" style="color:var(--loss);font-weight:600">${m.b}</td></tr>`).join('')
+          || '<tr><td colspan="4" class="empty">本赛季地图上无交手记录</td></tr>'}
           </tbody></table>
         </div>
         <div class="card" style="padding:17px">
           <div class="section-head"><h2 style="font-size:14.5px">分赛事交手</h2></div>
-          <table><thead><tr><th>赛事</th><th class="num">场次</th><th class="num">${esc(A.name)}</th><th class="num">${esc(B.name)}</th></tr></thead>
+          <table><thead><tr><th>赛事</th><th class="num">场次</th><th class="num">${esc(dispName(A))}</th><th class="num">${esc(dispName(B))}</th></tr></thead>
           <tbody>${Object.entries(byEvent).map(([k, v]) => `
             <tr><td>${esc(EVENTS[k]?.name || k)}</td><td class="num">${v.games}</td>
             <td class="num" style="color:var(--win);font-weight:600">${v.a}</td>
@@ -905,9 +970,9 @@ async function renderH2H(aId, bId) {
           </tbody></table>
           <div class="section-head" style="margin:20px 0 10px"><h2 style="font-size:14.5px">最近 20 次交手</h2></div>
           <div style="display:flex;gap:5px;flex-wrap:wrap">
-            ${games.slice(0, 20).map((g) => `<span class="pill ${g.w ? 'win' : 'loss'}" title="${esc(g.d)} · ${esc(state.index?.mapCn?.[g.map] || g.map || '')} · ${g.w ? A.name : B.name} 胜">${g.w ? 'A' : 'B'}</span>`).join('')}
+            ${games.slice(0, 20).map((g) => `<span class="pill ${g.w ? 'win' : 'loss'}" title="${esc(g.d)} · ${esc(mapCn(g.map))} · ${esc(dispName(g.w ? A : B))} 胜">${g.w ? 'A' : 'B'}</span>`).join('')}
           </div>
-          <div class="hint" style="margin-top:10px">A = ${esc(A.name)}　B = ${esc(B.name)}（左起为最近）</div>
+          <div class="hint" style="margin-top:10px">A = ${esc(dispName(A))}　B = ${esc(dispName(B))}（左起为最近）</div>
         </div>
       </div>
 
@@ -918,8 +983,8 @@ async function renderH2H(aId, bId) {
             <div class="mrow">
               <span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span>
               <div>
-                <div class="who"><b>${esc(A.name)}</b> <span class="muted">vs</span> <b>${esc(B.name)}</b>
-                  <span class="mapname">· ${esc(state.index?.mapCn?.[m.map] || m.map || '未知地图')}</span></div>
+                <div class="who">${nameHTML(A)} <span class="muted">vs</span> ${nameHTML(B)}
+                  ${mapTag(m.map)}</div>
                 <div class="meta"><span>${esc(fmtDate(m.d))}</span><span>${esc(EVENTS[m.e]?.name || '')}</span>
                   ${m.team ? `<span>${esc(m.team)} vs ${esc(m.oteam || '')}</span>` : ''}</div>
               </div>
@@ -943,9 +1008,10 @@ async function viewMaps(app) {
   const idx = await loadIndex();
   const maps = state.maps;
   app.innerHTML = `
-    <div class="section-head"><h2>地图情报</h2><span class="sub">三大赛事共使用 ${maps.length} 张地图</span></div>
+    <div class="section-head"><h2>地图情报</h2>
+      <span class="sub">仅本赛季（${esc(idx.meta.season?.label || '')}）地图 · 共 ${maps.length} 张</span></div>
     <div class="filters">
-      <input type="search" id="mapQ" placeholder="搜索地图…" style="min-width:200px">
+      <input type="search" id="mapQ" placeholder="搜索地图（中文 / 韩文）…" style="min-width:200px">
       <span class="count" id="mapCount"></span>
     </div>
     <div class="table-wrap"><table id="mapTable">
@@ -958,12 +1024,12 @@ async function viewMaps(app) {
     $('#mapTable tbody').innerHTML = list.map((m, i) => `
       <tr>
         <td><span class="rank">${i + 1}</span></td>
-        <td><b>${esc(m.cn)}</b> <span class="muted" style="font-size:11.5px">${esc(m.kr)}</span></td>
+        <td>${mapHTML(m.cn, m.kr)}</td>
         <td class="num">${nf(m.games)}</td>
         <td class="num">${m.players}</td>
         <td><div style="display:flex;gap:8px;flex-wrap:wrap">${m.top.slice(0, 3).map((t) =>
       `<a href="#/player/${t.id}" style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px">
-             ${racePill(t.race)}<b>${esc(t.name)}</b><span class="muted" style="font-family:var(--mono);font-size:11px">${t.games}</span></a>`).join('')}</div></td>
+             ${racePill(t.race)}${nameHTML(t)}<span class="muted" style="font-family:var(--mono);font-size:11px">${t.games}</span></a>`).join('')}</div></td>
       </tr>`).join('') || '<tr><td colspan="5" class="empty">无匹配地图</td></tr>';
   };
   draw('');

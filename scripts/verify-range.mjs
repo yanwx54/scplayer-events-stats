@@ -6,6 +6,9 @@ import { readFile } from 'node:fs/promises';
 
 const daily = JSON.parse(await readFile('public/data/daily.json', 'utf8'));
 const days = daily.days;
+const idx = JSON.parse(await readFile('public/data/index.json', 'utf8'));
+/** 数据起点，与 build-db.mjs 一致；复算时同样只统计该日期之后的比赛 */
+const CUTOFF = idx.meta.cutoff || days[0];
 
 const lowerBound = (d) => { let lo = 0, hi = days.length; while (lo < hi) { const m = (lo + hi) >> 1; if (days[m] < d) lo = m + 1; else hi = m; } return lo; };
 const upperBound = (d) => { let lo = 0, hi = days.length; while (lo < hi) { const m = (lo + hi) >> 1; if (days[m] <= d) lo = m + 1; else hi = m; } return lo - 1; };
@@ -27,7 +30,9 @@ function brute(pid, from, to, ev) {
   let g = 0, w = 0, e = 0;
   for (const m of raw) {
     if (ev && m.event_id !== ev) continue;
-    if (!m.played_on || m.played_on < from || m.played_on > to) continue;
+    const d = m.played_on || '';
+    if (d < CUTOFF) continue;                       // 与 build-db 口径一致
+    if (!d || d < from || d > to) continue;
     const me = m.participants.find((p) => p.player_id === pid);
     if (!me) continue;
     g++;
@@ -39,19 +44,20 @@ function brute(pid, from, to, ev) {
 }
 
 const cases = [
-  ['2021-04-08', '2026-09-17', 0],
   ['2026-01-01', '2026-09-17', 0],
-  ['2025-01-01', '2025-12-31', 0],
+  ['2021-04-08', '2026-09-17', 0],      // 起点早于 cutoff，应被自动钳制
   ['2026-01-01', '2026-09-17', 43],
-  ['2025-06-01', '2025-12-31', 33],
-  ['2024-01-01', '2026-09-17', 64],
+  ['2026-01-01', '2026-09-17', 33],
+  ['2026-01-01', '2026-09-17', 64],
+  ['2026-03-01', '2026-06-30', 0],
   ['2026-08-01', '2026-09-17', 0],
+  ['2026-07-01', '2026-09-17', 43],
 ];
 
 let pass = 0, fail = 0;
 const label = (ev) => (ev ? `赛事${ev}` : '全部赛事');
 
-for (const pid of [34, 12, 3, 9, 39, 22, 151, 108]) {
+for (const pid of [34, 12, 3, 9, 39, 22, 151, 35]) {
   for (const [from, to, ev] of cases) {
     const lo = Math.max(0, lowerBound(from)), hi = upperBound(to);
     const a = sumBuckets(daily.p[pid], lo, hi, ev);

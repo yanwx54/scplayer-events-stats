@@ -1,9 +1,15 @@
 /**
  * 构建聚合数据库。
  * 输入：data/raw/event-{43,33,64}.json、data/raw/players.json
- * 输出：public/data/index.json、public/data/players/{id}.json、public/data/maps.json
+ * 输出：public/data/index.json、public/data/players/{id}.json、public/data/maps.json、public/data/daily.json
  *
- * 所有统计口径严格限定在三个赛事（43 / 33 / 64）的比赛数据内。
+ * 统计口径：
+ *   1) 仅三个赛事（43 / 33 / 64）
+ *   2) 仅 CUTOFF（默认 2026-01-01）之后的比赛
+ *   3) 地图板块仅展示「本赛季地图」（见 SEASON_MAP_ROWS）
+ *
+ * 选手中文名 / 英文 ID 依据 docs/韩国选手名字.md，
+ * 地图中文名依据 docs/地图翻译规则.md；文档未涉及的一律保留原韩文。
  */
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -12,6 +18,9 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const RAW = path.join(ROOT, 'data', 'raw');
 const OUT = path.join(ROOT, 'public', 'data');
 
+/** 只保留该日期（含）之后的比赛。改这里即可调整数据范围。 */
+const CUTOFF = process.env.CUTOFF || '2026-01-01';
+
 const EVENTS = [
   { id: 43, name: '메이저 프로리그', nameCn: 'Major Pro League', short: '메프로', shortCn: 'Major' },
   { id: 33, name: 'K리그', nameCn: 'K League', short: 'K리그', shortCn: 'K League' },
@@ -19,29 +28,81 @@ const EVENTS = [
 ];
 const EVENT_IDS = EVENTS.map((e) => e.id);
 
-/* ---------- 韩文地图名 → 中文名 ---------- */
-const MAP_CN = {
-  '옥타곤': '八角笼', '아이올로스': '艾洛斯', '오디세이': '奥德赛', '컬러리스 페이트': '无色命运',
-  '녹아웃': '击倒', '백룸': '后室', '애티튜드': '态度', '폴리포이드': '波利波伊德', '폴스타': '极星',
-  '네오 실피드': '新希尔菲德', '제인 도': '简·多', '매치포인트': '赛点', '라데온': '镭射',
-  '메트로폴리스': '大都会', '투혼': '斗魂', '이클립스': '日蚀', '헬바운드': '地狱边界',
-  '도미네이터': '支配者', '리트머스': '石蕊', '울돌목': '鸣梁', '데자 뷰': '似曾相识',
-  '데스밸리': '死亡谷', '킥 백': '回踢', '판테온': '万神殿', '민스트렐': '吟游诗人',
-  '버미어': '朱红', '몬티홀': '蒙提霍尔', '아포칼립스': '天启', '레트로': '复古',
-  '블리츠Y': '闪电Y', '시타델': '堡垒', '네오 다크 오리진': '新黑暗起源', '트로이': '特洛伊',
-  '라 캄파넬라': '钟声', '인베이더': '入侵者', '템페스트': '暴风雨', '다크 오리진': '黑暗起源',
-  '챔피언': '冠军', '슈팅브레이크': '射击突破', '네메시스': '复仇女神', '단장의능선': '断肠岭',
-  '버터': '黄油', '76': '76', '오버워치': '守望先锋', '써킷': '电路', '리볼버': '左轮',
-  '더 블레싱': '祝福', '뉴런': '神经元', '레드 이글': '红鹰', '알레그로': '快板',
-  '네오 알카노이드': '新打砖块', '메타버스': '元宇宙', '프로스트': '霜冻', '폴아웃': '辐射',
-  '굿나잇': '晚安', '라르고': '广板', '어센션': '升天', '모노폴리': '垄断',
-  '제이드': '翡翠', '실피드': '希尔菲德', '화이트아웃': '白茫茫', '아웃사이더': '局外人',
-  '일렉트릭서킷': '电子电路', '레몬': '柠檬', '아즈텍': '阿兹特克', '라만차': '拉曼查',
-  '저격능선': '狙击岭', '파이썬': '蟒蛇', '링잉블룸': '响铃花', '얼티메이트스트림': '终极流',
-  '히든트랙': '隐秘赛道', '폴라리스랩소디': '北极星狂想曲', '에스컬레이드': '升级',
-  '중원': '中原', '네오 홀 오브 발할라': '新英灵殿', '머큐리': '水星', '데스페라도': '亡命徒',
-  '네오 정글 스토리': '新丛林故事', '네오아즈텍': '新阿兹特克', '안드로메다': '仙女座',
-  '타우크로스': '十字星', '서킷브레이커': '断路器', '벤젠': '苯', '트라이애슬론': '铁人三项',
+/* ============================================================
+   地图译名（依据 docs/地图翻译规则.md）
+   每行列出该地图在数据中出现过的所有韩文写法；只有本表覆盖到的地图才显示中文，
+   其余一律保留原韩文（符合「没有涉及到的先用原有的韩文」）。
+   ============================================================ */
+const MAP_ROWS = [
+  { kr: ['제인 도', '제인'], cn: '无名氏', en: 'Jane Doe' },
+  { kr: ['애티튜드', '애티', '에티'], cn: '态度', en: 'Attitude' },
+  { kr: ['옥타곤', '옥타'], cn: '八角笼', en: 'Octagon' },
+  { kr: ['매치포인트', '매치'], cn: '赛点', en: 'MatchPoint' },
+  { kr: ['네오실피드', '네오 실피드', '실피드', '실피'], cn: '小仙女', en: 'Neo Sylphid' },
+  { kr: ['녹아웃', '녹아'], cn: '击倒', en: 'KnockOut' },
+  { kr: ['폴스타', '폴스'], cn: '北极星', en: 'Pole Star' },
+  { kr: ['오디세이', '오디'], cn: '奥德赛', en: 'Odyssey' },
+  { kr: ['컬러리스 페이트', '컬러'], cn: '无色命运', en: 'Colorless Fate' },
+  { kr: ['아이올로스', '아이'], cn: '艾洛斯', en: 'Aiolos' },
+  { kr: ['백 룸', '백룸'], cn: '后室', en: 'Backrooms' },
+];
+
+/** 本赛季地图（docs/地图翻译规则.md「本赛季地图 · 2026年下半年」）。
+ *  所有地图板块只展示这些地图。 */
+const SEASON_LABEL = '2026 下半年';
+const SEASON_ROW_IDX = [1, 2, 5, 7, 8, 9, 10];   // 指向 MAP_ROWS 下标
+const SEASON_MAP_ROWS = SEASON_ROW_IDX.map((i) => MAP_ROWS[i]);
+
+/** 韩文（含别名） → 中文 */
+const MAP_CN = {};
+for (const r of MAP_ROWS) for (const k of r.kr) MAP_CN[k] = r.cn;
+
+/** 数据中实际出现的写法 → 该地图的规范中文名；未覆盖则为 undefined（前端回落韩文） */
+const mapCnOf = (kr) => (kr ? MAP_CN[kr] : undefined);
+
+/** 本赛季地图的全部韩文别名（用于过滤） */
+const SEASON_MAP_ALIASES = new Set(SEASON_MAP_ROWS.flatMap((r) => r.kr));
+const isSeasonMap = (kr) => !!kr && SEASON_MAP_ALIASES.has(kr);
+
+/* ============================================================
+   选手中文名 / 英文 ID（依据 docs/韩国选手名字.md）
+   ============================================================ */
+const PLAYER_ROWS = [
+  ['이영호', '教主', 'Flash'], ['이재호', '光哥', 'Light'], ['유영진', '永镇', 'Rush'],
+  ['조기석', '夏普', 'Sharp'], ['김지성', '抱歉', 'Royal'], ['정영재', '橘右京', 'JYJ'],
+  ['황병영', '兵营', 'Barracks'], ['이영웅', '教练', 'Speed'], ['최호선', '侠义', 'Ssak'],
+  ['박성균', '神麦', 'Mind'], ['윤찬희', '猪头', 'Mong'], ['김태영', '苹果', 'Ample'],
+  ['신상문', '如花', 'Leta'], ['김재현', '刷分', 'Shine'], ['임진묵', '钢琴', 'Piano'],
+  ['지동원', 'KOP', 'Kop'], ['전태양', '太阳', 'Sun'], ['유승곤', '扫描', 'Scan'],
+  ['정민기', 'Bishop', 'Bishop'], ['김택용', '老毕', 'Bisu'], ['송병구', '石头', 'Stork'],
+  ['정윤종', '雨神', 'Rain'], ['장윤철', '小雪', 'Snow'], ['도재욱', '禽兽', 'Best'],
+  ['변현제', '迷你', 'Mini'], ['김윤중', '宝儿', 'JUM'], ['윤용태', '灯哥', 'Free'],
+  ['원선재', '木头', 'Motive'], ['윤수철', '胡子', 'Tulbo'], ['박수범', '泰森', 'Tyson'],
+  ['진영화', '老师', 'Movie'], ['홍덕', '如影', 'Ruin'], ['배병우', '815', '815'],
+  ['이경민', '虎狼', 'Horang'], ['김범수', 'nOOB', 'nOOB'], ['정경두', '爆炸头', 'Paralyze'],
+  ['장민철', 'MC', 'MC'], ['손찬웅', '白虎', 'BackHo'], ['이광용', 'Mighty', 'Mighty'],
+  ['이제동', '解冻', 'Jaedong'], ['김민철', '永康', 'Soulkey'], ['조일장', '小胖', 'Hero'],
+  ['김명운', '小零', 'Queen'], ['김성대', '瞬本', 'Action'], ['박상현', '索玛', 'Soma'],
+  ['김정우', '火星', 'Effort'], ['이영한', '假卡', 'Shine Kal'], ['이예훈', '小头', 'Sacsri'],
+  ['박준오', '杀本', 'Killer'], ['임홍규', '屌丝', 'Larva'], ['김경모', '寂寞', 'Gaemo'],
+  ['김윤환', '脑虫', 'Clam'], ['방태수', 'BTS', 'BTS'], ['박재혁', '胡克', 'Hyuk'],
+  ['어윤수', '搜本', 'Soo'], ['이창우', 'Saber', 'Saber'], ['배성흠', 'HM', 'HM'],
+  ['고석현', '小玄', 'Hyun'], ['서문지훈', '拼命', 'Zelot'], ['윤진규', 'Yoon', 'Yoon'],
+];
+
+/** 归一化选手名：去空白 + 小写，用于容错匹配（数据里偶有多余空格） */
+const normName = (s) => String(s ?? '').replace(/\s+/g, '').toLowerCase();
+const CN_BY_KEY = new Map();   // 韩文名/英文ID → 中文名
+const EN_BY_KEY = new Map();   // 韩文名/英文ID → 英文 ID
+for (const [kr, cn, en] of PLAYER_ROWS) {
+  for (const k of [normName(kr), normName(en)]) {
+    if (!CN_BY_KEY.has(k)) { CN_BY_KEY.set(k, cn); EN_BY_KEY.set(k, en); }
+  }
+}
+/** 选手名 → { cn, idEn }；不在文档内则为 null */
+const nameOf = (name) => {
+  const k = normName(name);
+  return CN_BY_KEY.has(k) ? { cn: CN_BY_KEY.get(k), idEn: EN_BY_KEY.get(k) } : { cn: null, idEn: null };
 };
 
 const RACE_CN = { T: '人族', Z: '虫族', P: '神族' };
@@ -49,11 +110,15 @@ const RACE_CN = { T: '人族', Z: '虫族', P: '神族' };
 /* ---------- 载入 ---------- */
 const players = JSON.parse(await readFile(path.join(RAW, 'players.json'), 'utf8'));
 const matches = [];
+let droppedBeforeCutoff = 0;
 for (const e of EVENT_IDS) {
   const arr = JSON.parse(await readFile(path.join(RAW, `event-${e}.json`), 'utf8'));
-  for (const m of arr) matches.push(m);
+  for (const m of arr) {
+    if ((m.played_on || '') < CUTOFF) { droppedBeforeCutoff++; continue; }
+    matches.push(m);
+  }
 }
-console.log('loaded matches:', matches.length);
+console.log('loaded matches:', matches.length, `| 因早于 ${CUTOFF} 被剔除:`, droppedBeforeCutoff);
 
 /* ---------- 校验 ---------- */
 const seen = new Set();
@@ -72,6 +137,7 @@ for (const [id, raw] of Object.entries(players)) {
   P.set(pid, {
     id: pid,
     name: raw.name,
+    ...nameOf(raw.name),
     race: raw.main_race || null,
     elo: raw.elo_raw ? Number(raw.elo_raw) : null,
     avatar: raw.thumb_url ? `avatars/${pid}.jpg` : null,
@@ -94,7 +160,7 @@ for (const [id, raw] of Object.entries(players)) {
 for (const m of matches) for (const p of m.participants) {
   if (!P.has(p.player_id)) {
     P.set(p.player_id, {
-      id: p.player_id, name: p.name, race: p.race, elo: null, avatar: null, college: null, soop: null,
+      id: p.player_id, name: p.name, ...nameOf(p.name), race: p.race, elo: null, avatar: null, college: null, soop: null,
       careerWins: null, careerLosses: null, lastPlayed: null,
       games: 0, wins: 0, losses: 0, byEvent: {}, byMap: {}, vsRace: {}, vsOpp: {}, byDay: {},
       firstDate: null, lastDate: null, eloNet: 0, eloGames: 0, monthly: {}, matches: [],
@@ -161,9 +227,12 @@ for (const pl of P.values()) {
   if (pl.games === 0) continue;
   pl.matches.sort((x, y) => (y.d || '').localeCompare(x.d || '') || y.id - x.id);
 
-  const mapList = Object.entries(pl.byMap).map(([kr, v]) => ({
-    kr, cn: MAP_CN[kr] || kr, ...v, wr: wr(v.wins, v.games),
-  })).sort((a, b) => b.games - a.games);
+  // 地图板块只保留本赛季地图（非本赛季地图不进 mapList，故前端所有地图区块自动收敛）
+  const mapList = Object.entries(pl.byMap)
+    .filter(([kr]) => isSeasonMap(kr))
+    .map(([kr, v]) => ({
+      kr, cn: mapCnOf(kr) || kr, ...v, wr: wr(v.wins, v.games),
+    })).sort((a, b) => b.games - a.games);
 
   const raceList = Object.entries(pl.vsRace).map(([r, v]) => ({
     race: r, ...v, wr: wr(v.wins, v.games),
@@ -172,8 +241,8 @@ for (const pl of P.values()) {
   const oppList = Object.entries(pl.vsOpp).map(([oid, v]) => {
     const o = P.get(Number(oid));
     return {
-      id: Number(oid), name: o?.name || `#${oid}`, race: o?.race || null,
-      avatar: o?.avatar || null, ...v, wr: wr(v.wins, v.games),
+      id: Number(oid), name: o?.name || `#${oid}`, cn: o?.cn || null, idEn: o?.idEn || null,
+      race: o?.race || null, avatar: o?.avatar || null, ...v, wr: wr(v.wins, v.games),
     };
   }).sort((a, b) => b.games - a.games);
 
@@ -194,7 +263,7 @@ for (const pl of P.values()) {
 
   // 长期趋势：按月聚合，用于折线图
   const detail = {
-    id: pl.id, name: pl.name, race: pl.race, elo: pl.elo, avatar: pl.avatar,
+    id: pl.id, name: pl.name, cn: pl.cn, idEn: pl.idEn, race: pl.race, elo: pl.elo, avatar: pl.avatar,
     college: pl.college, soop: pl.soop,
     careerWins: pl.careerWins, careerLosses: pl.careerLosses, lastPlayed: pl.lastPlayed,
     games: pl.games, wins: pl.wins, losses: pl.losses, wr: wr(pl.wins, pl.games),
@@ -209,8 +278,8 @@ for (const pl of P.values()) {
   await writeFile(path.join(OUT, 'players', `${pl.id}.json`), JSON.stringify(detail));
 
   for (const m of pl.matches) {
-    if (!m.map) continue;
-    const g = globalMap[m.map] || (globalMap[m.map] = { kr: m.map, cn: MAP_CN[m.map] || m.map, games: 0, players: {} });
+    if (!isSeasonMap(m.map)) continue;   // 地图情报只统计本赛季地图
+    const g = globalMap[m.map] || (globalMap[m.map] = { kr: m.map, cn: mapCnOf(m.map) || m.map, games: 0, players: {} });
     g.games++;
     g.players[pl.id] = (g.players[pl.id] || 0) + 1;
   }
@@ -227,7 +296,7 @@ for (const pl of P.values()) {
   }
 
   index.push({
-    id: pl.id, name: pl.name, race: pl.race, elo: pl.elo, avatar: pl.avatar,
+    id: pl.id, name: pl.name, cn: pl.cn, idEn: pl.idEn, race: pl.race, elo: pl.elo, avatar: pl.avatar,
     college: pl.college,
     games: pl.games, wins: pl.wins, losses: pl.losses, wr: wr(pl.wins, pl.games),
     ev,
@@ -245,7 +314,7 @@ const maps = Object.values(globalMap).map((g) => {
     .map(([id, games]) => ({ id: Number(id), games }))
     .sort((a, b) => b.games - a.games)
     .slice(0, 5)
-    .map((x) => ({ ...x, name: P.get(x.id)?.name, race: P.get(x.id)?.race }));
+    .map((x) => ({ ...x, name: P.get(x.id)?.name, cn: P.get(x.id)?.cn || null, race: P.get(x.id)?.race }));
   return { kr: g.kr, cn: g.cn, games: g.games, players: Object.keys(g.players).length, top };
 }).sort((a, b) => b.games - a.games);
 
@@ -273,8 +342,15 @@ const index_out = {
     totalPlayers: index.length,
     totalMaps: maps.length,
     first: allDates[0], last: allDates.at(-1),
+    cutoff: CUTOFF,
     source: 'https://eloboard.com',
-    scope: '仅统计 메이저 프로리그(43) / K리그(33) / 준메이저 프로리그(64) 三个赛事的比赛',
+    scope: `仅统计 메이저 프로리그(43) / K리그(33) / 준메이저 프로리그(64) 三个赛事、且不早于 ${CUTOFF} 的比赛`,
+    // 地图板块的展示范围（本赛季地图）
+    season: {
+      label: SEASON_LABEL,
+      aliases: [...SEASON_MAP_ALIASES],
+      maps: SEASON_MAP_ROWS.map((r) => ({ kr: r.kr[0], cn: r.cn, en: r.en })),
+    },
   },
   events: eventMeta,
   mapCn: MAP_CN,
