@@ -183,17 +183,30 @@ const pages = [
   check('双方显示中文名（迷你 / 永镇）', h2hNames.join(',') === '迷你,永镇', h2hNames.join(','));
 
   // 交手记录：全部信息压缩成一行（表格），不再用两行 .mrow 布局
+  // 交手记录：单行 4 列，两栏排布（先填满第一栏，再排第二栏）
   const recRows = await page.locator('#h2hList tbody tr').count();
   check(`交手记录行数 = 交战场次 ${h2hGames.length}`, recRows === Math.min(h2hGames.length, 200), `${recRows} 行`);
-  const recCells = await page.$$eval('#h2hList tbody tr:first-child td', (tds) => tds.length);
-  check('交手记录每行 5 列（结果/对阵/地图/日期/赛事）', recCells === 5, `${recCells} 列`);
+  // 两栏各有一张表，断言统一取第一栏
+  const COL1 = '#h2hList .table-wrap:first-child ';
+  const recCells = await page.$$eval(COL1 + 'tbody tr:first-child td', (tds) => tds.length);
+  check('交手记录每行 4 列（结果/日期/对阵/地图）', recCells === 4, `${recCells} 列`);
+  const recHeads = await page.$$eval(COL1 + 'thead tr:first-child th', (ths) =>
+    ths.map((t) => t.textContent.trim()).filter(Boolean));
+  check('交手记录表头 = 日期/对阵/地图（赛事列已移除）', recHeads.join('/') === '日期/对阵/地图', recHeads.join('/'));
   check('交手记录已无两行布局（.mrow）', (await page.locator('#h2hBody .mrow').count()) === 0);
-  check('交手记录含结果徽标', (await page.locator('#h2hList tbody tr:first-child td .res').count()) === 1);
-  const recTxt = await page.locator('#h2hList tbody tr:first-child').innerText();
+  check('交手记录含结果徽标', (await page.locator(COL1 + 'tbody tr:first-child td .res').count()) === 1);
+  check('交手记录分为两栏', (await page.locator('#h2hList .table-wrap').count()) === 2);
+  const recTxt = await page.locator(COL1 + 'tbody tr:first-child').innerText();
   console.log(`    首行: ${recTxt.replace(/\n/g, ' | ')}`);
-  check('交手记录赛事显示中文名', /职业联赛|K联赛|半职业联赛/.test(recTxt), recTxt.replace(/\n/g, ' ').slice(0, 70));
-  check('交手记录每行只占一行文本高度（无第二行 meta）',
-    recTxt.split('\n').length <= 5, `${recTxt.split('\n').length} 行文本`);
+  check('交手记录每行只占一行文本高度', recTxt.split('\n').length <= 4, `${recTxt.split('\n').length} 行文本`);
+  // 列优先：第一栏的日期都晚于第二栏（第一栏装的是最近的比赛）
+  const colDates = await page.$$eval('#h2hList .h2hTbl', (tbls) => tbls.map((t) =>
+    [...t.querySelectorAll('tbody tr')].map((tr) => tr.children[1].textContent.trim())));
+  check('两栏为列优先填充（第一栏填满后才排第二栏）',
+    colDates.length === 2 && colDates[0].length >= colDates[1].length && colDates[0].at(-1) > colDates[1][0],
+    `栏1 ${colDates[0]?.length} 行（末 ${colDates[0]?.at(-1)}）/ 栏2 ${colDates[1]?.length} 行（首 ${colDates[1]?.[0]}）`);
+  const recOverflow = await page.$$eval('#h2hList .table-wrap', (els) => els.map((e) => e.scrollWidth - e.clientWidth));
+  check('两栏内容均未横向溢出', recOverflow.every((d) => d <= 0), recOverflow.join(' / '));
   // 元素截图会被固定顶栏盖住，先临时隐藏再截
   await page.evaluate(() => { document.querySelector('.topbar').style.display = 'none'; });
   await page.waitForTimeout(200);

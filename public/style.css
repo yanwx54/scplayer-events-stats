@@ -216,8 +216,12 @@ input[type=search]:focus,input[type=text]:focus,select:focus{border-color:var(--
 td .res{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-weight:700;font-size:12px}
 td .res.w{background:#e7f7ee;color:var(--win)}
 td .res.l{background:#fdecec;color:var(--loss)}
-/* 单行交手记录：结果徽标列窄一点，日期等次要信息淡化 */
-#h2hList td:first-child{width:46px;padding-right:4px}
+/* 单行交手记录：两列排布（先填满第一列，再排第二列） */
+.h2h-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+.h2h-cols .table-wrap{min-width:0}
+.h2h-cols td,.h2h-cols th{padding-left:10px;padding-right:10px}
+.h2h-cols td:first-child{width:44px;padding-right:4px}
+.h2h-cols .dt{font-family:var(--mono);font-size:12px;color:var(--text-3);white-space:nowrap}
 
 /* 地图情报：分种族对抗胜率单元格 */
 #mapTable thead th.mu-group{text-align:center;color:var(--text-3);border-bottom:1px solid var(--line)}
@@ -307,6 +311,7 @@ td .res.l{background:#fdecec;color:var(--loss)}
   .grid.c4{grid-template-columns:repeat(2,1fr)}
   .grid.c3{grid-template-columns:repeat(2,1fr)}
   .hero-stats{grid-template-columns:repeat(2,1fr)}
+  .h2h-cols{grid-template-columns:1fr}
   main{padding:18px 16px 40px}
   .topbar{padding:0 16px;gap:14px}
   .footer{padding:18px 16px 30px}

@@ -985,20 +985,30 @@ async function renderH2H(aId, bId) {
 
       <div class="section">
         <div class="section-head"><h2>交手记录</h2><span class="sub">${games.length} 场${games.length > H2H_MAX ? ` · 仅显示最近 ${H2H_MAX} 场` : ''}</span></div>
-        <div class="table-wrap"><table id="h2hList">
-          <thead><tr><th></th><th>对阵</th><th>地图</th><th>日期</th><th>赛事</th></tr></thead>
-          <tbody>${games.slice(0, H2H_MAX).map((m) => {
-        const win = m.w ? A : B, lose = m.w ? B : A;
-        const season = !m.map || SEASON_MAPS.has(m.map);
-        return `<tr>
-              <td><span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span></td>
-              <td>${nameHTML(win)}<span class="muted" style="margin:0 6px">vs</span><span class="muted">${nameHTML(lose)}</span></td>
-              <td>${mapHTML(mapCn(m.map), m.map)}${season ? '' : '<span class="muted" style="font-size:11px"> 非本赛季</span>'}</td>
-              <td class="muted">${esc(fmtDate(m.d))}</td>
-              <td>${EVENTS[m.e] ? evHTML(m.e) : '<span class="muted">—</span>'}</td>
-            </tr>`;
-      }).join('')}</tbody>
-        </table></div>
+        <div class="h2h-cols" id="h2hList">
+          ${(() => {
+        const list = games.slice(0, H2H_MAX);
+        // 先填满第一列，再排第二列
+        const half = Math.ceil(list.length / 2);
+        const cols = [list.slice(0, half), list.slice(half)];
+        const row = (m) => {
+          const win = m.w ? A : B, lose = m.w ? B : A;
+          const season = !m.map || SEASON_MAPS.has(m.map);
+          return `<tr>
+                <td><span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span></td>
+                <td class="dt">${esc(fmtDate(m.d))}</td>
+                <td>${nameHTML(win)}<span class="muted" style="margin:0 5px">vs</span><span class="muted">${nameHTML(lose)}</span></td>
+                <td>${mapHTML(mapCn(m.map), m.map)}${season ? '' : '<span class="muted" style="font-size:11px"> 非本赛季</span>'}</td>
+              </tr>`;
+        };
+        return cols.map((c, ci) => `
+            <div class="table-wrap"><table class="h2hTbl">
+              <thead><tr><th></th><th>日期</th><th>对阵</th><th>地图</th></tr></thead>
+              <tbody>${c.map(row).join('')
+            || (ci === 0 ? '<tr><td colspan="4" class="empty">该时间段内没有交手记录</td></tr>' : '')}</tbody>
+            </table></div>`).join('');
+      })()}
+        </div>
       </div>`}`;
   };
 
