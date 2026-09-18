@@ -28,15 +28,15 @@ const EVENTS = [
 ];
 const EVENT_IDS = EVENTS.map((e) => e.id);
 
-/** 种族对抗的规范顺序：Z < P < T，两两组合得到 ZvP / ZvT / PvT */
+/**
+ * 种族对抗：展示 6 个方向，按第一个种族分组（Z 两列 / P 两列 / T 两列）。
+ * 每个方向只统计「前者」的胜率，例如 ZvP 是虫族对神族的胜率，PvZ 则是神族对虫族的胜率。
+ * 同一场比赛会同时计入两个相反方向（ZvP 与 PvZ 场次相同、胜率互补）。
+ */
 const RACE_ORDER = { Z: 0, P: 1, T: 2 };
-const MATCHUPS = ['ZvP', 'ZvT', 'PvT'];
-const matchupOf = (r1, r2) => {
-  if (!r1 || !r2 || !(r1 in RACE_ORDER) || !(r2 in RACE_ORDER)) return null;
-  const a = RACE_ORDER[r1] <= RACE_ORDER[r2] ? r1 : r2;
-  const b = a === r1 ? r2 : r1;
-  return `${a}v${b}`;
-};
+const MATCHUPS = ['ZvP', 'ZvT', 'PvZ', 'PvT', 'TvZ', 'TvP'];
+/** 互为反向的对抗组合，用于自检 */
+const MATCHUP_PAIRS = [['ZvP', 'PvZ'], ['ZvT', 'TvZ'], ['PvT', 'TvP']];
 
 /* ============================================================
    地图译名（依据 docs/地图翻译规则.md）
@@ -198,17 +198,19 @@ for (const m of matches) {
       games: 0, mirror: 0, unknownRace: 0, m2: {},
     });
     g.games++;
-    const label = matchupOf(a.race, b.race);
-    if (!label) {
-      g.unknownRace++;
-    } else if (a.race === b.race) {
-      g.mirror++;                       // 同族对抗（ZvZ / PvP / TvT）：胜负各半，不统计胜率
+    const ra = a.race, rb = b.race;
+    if (!(ra in RACE_ORDER) || !(rb in RACE_ORDER)) {
+      g.unknownRace++;                  // 种族缺失，不计入任何对抗
+    } else if (ra === rb) {
+      g.mirror++;                       // 同族对抗（ZvZ / PvP / TvT）：不计胜率
     } else {
-      // 规范顺序下先出现的一方为 w1
-      const first = RACE_ORDER[a.race] <= RACE_ORDER[b.race] ? a : b;
-      const mm = g.m2[label] || (g.m2[label] = { g: 0, w1: 0, w2: 0 });
-      mm.g++;
-      if (first.result === 'win') mm.w1++; else mm.w2++;
+      // 同一场比赛计入两个相反方向，各自记录「前者」是否获胜
+      for (const [me, opp] of [[a, b], [b, a]]) {
+        const label = `${me.race}v${opp.race}`;
+        const mm = g.m2[label] || (g.m2[label] = { g: 0, w: 0 });
+        mm.g++;
+        if (me.result === 'win') mm.w++;
+      }
     }
   }
 
@@ -334,22 +336,31 @@ for (const pl of P.values()) {
 
 index.sort((a, b) => b.games - a.games);
 
-/* ---------- 地图榜：总场次 + 分种族对抗胜率（不展示选手出场数据） ---------- */
+/* ---------- 地图榜：总场次 + 6 个方向的种族对抗胜率（不展示选手出场数据） ---------- */
 const maps = Object.values(mapAgg).map((g) => {
   const matchups = {};
   for (const label of MATCHUPS) {
     const mm = g.m2[label];
     matchups[label] = mm
-      ? { g: mm.g, w1: mm.w1, w2: mm.w2, wr1: wr(mm.w1, mm.g) }
-      : { g: 0, w1: 0, w2: 0, wr1: null };
+      ? { g: mm.g, w: mm.w, wr: wr(mm.w, mm.g) }
+      : { g: 0, w: 0, wr: null };
   }
   return { kr: g.kr, cn: g.cn, games: g.games, mirror: g.mirror, unknownRace: g.unknownRace, matchups };
 }).sort((a, b) => b.games - a.games);
 
-// 自检：每张地图「三项异族对抗 + 同族 + 未标注种族」应等于总场次
+// 自检 1：异族场次按两个方向各计一次，故「6 个方向场次之和 ÷ 2 + 同族 + 未标注种族」应等于总场次
 for (const mp of maps) {
-  const sum = MATCHUPS.reduce((a, k) => a + mp.matchups[k].g, 0) + mp.mirror + mp.unknownRace;
+  const sum = MATCHUPS.reduce((a, k) => a + mp.matchups[k].g, 0) / 2 + mp.mirror + mp.unknownRace;
   if (sum !== mp.games) console.error(`✗ 地图 ${mp.kr} 对抗场次合计 ${sum} ≠ 总场次 ${mp.games}`);
+}
+// 自检 2：互为反向的两个方向场次必须相同、胜场相加必须等于场次
+for (const mp of maps) {
+  for (const [x, y] of MATCHUP_PAIRS) {
+    const mx = mp.matchups[x], my = mp.matchups[y];
+    if (mx.g !== my.g || mx.w + my.w !== mx.g) {
+      console.error(`✗ 地图 ${mp.kr} ${x}/${y} 不互补：${mx.g}场 ${mx.w}胜 / ${my.g}场 ${my.w}胜`);
+    }
+  }
 }
 const mapGamesTotal = maps.reduce((a, m) => a + m.games, 0);
 
@@ -428,6 +439,6 @@ console.log('meta:', JSON.stringify(index_out.meta));
 console.log('events:', JSON.stringify(eventMeta));
 console.log('top10:', index.slice(0, 10).map((p) => `${p.name}(${p.race}) ${p.games}场 ${p.wr}%`).join(' | '));
 console.log('top maps:', maps.slice(0, 5).map((m) =>
-  `${m.cn} ${m.games}场 [${MATCHUPS.map((k) => `${k} ${m.matchups[k].wr1 ?? '—'}%`).join(' ')} 同族${m.mirror}]`).join(' | '));
+  `${m.cn} ${m.games}场 [${MATCHUPS.map((k) => `${k} ${m.matchups[k].wr ?? '—'}%`).join(' ')} 同族${m.mirror}]`).join(' | '));
 console.log('地图总场次:', mapGamesTotal, '| 同族合计:', maps.reduce((a, m) => a + m.mirror, 0));
 console.log('months:', months.length, months[0]?.m, '~', months.at(-1)?.m);

@@ -69,8 +69,9 @@ console.log('  maps.json 条数', maps.length, maps.length === idx.meta.season?.
 const mapGames = maps.reduce((a, m) => a + m.games, 0);
 console.log('  maps.json 总场次', mapGames, '= 本赛季对局', onSeason, mapGames === onSeason ? '✓' : '✗');
 
-console.log('\n=== 地图对抗胜率（分种族，从原始数据独立复算）===');
-const MU = idx.meta.matchups || ['ZvP', 'ZvT', 'PvT'];
+console.log('\n=== 地图对抗胜率（6 个方向，从原始数据独立复算）===');
+const MU = idx.meta.matchups || ['ZvP', 'ZvT', 'PvZ', 'PvT', 'TvZ', 'TvP'];
+const PAIRS = [['ZvP', 'PvZ'], ['ZvT', 'TvZ'], ['PvT', 'TvP']];
 const ORD = { Z: 0, P: 1, T: 2 };
 const rc = {};
 for (const e of [43, 33, 64]) {
@@ -83,33 +84,40 @@ for (const e of [43, 33, 64]) {
     g.games++;
     if (a.race === b.race) { g.mirror++; continue; }
     if (!(a.race in ORD) || !(b.race in ORD)) continue;
-    const label = ORD[a.race] <= ORD[b.race] ? `${a.race}v${b.race}` : `${b.race}v${a.race}`;
-    const first = ORD[a.race] <= ORD[b.race] ? a : b;
-    const mm = g.m2[label] || (g.m2[label] = { g: 0, w1: 0 });
-    mm.g++;
-    if (first.result === 'win') mm.w1++;
+    // 同一场计入两个相反方向
+    for (const [me, opp] of [[a, b], [b, a]]) {
+      const label = `${me.race}v${opp.race}`;
+      const mm = g.m2[label] || (g.m2[label] = { g: 0, w: 0 });
+      mm.g++;
+      if (me.result === 'win') mm.w++;
+    }
   }
 }
 let muBad = 0, muMirror = 0;
 for (const mp of maps) {
   const r = rc[mp.kr];
-  const sumG = MU.reduce((a, k) => a + (mp.matchups[k]?.g || 0), 0);
+  const sumG = MU.reduce((a, k) => a + (mp.matchups[k]?.g || 0), 0) / 2;
   const okStruct = sumG + mp.mirror + mp.unknownRace === mp.games;
   const okMirror = !!r && r.mirror === mp.mirror;
   let okMU = true;
   for (const k of MU) {
-    const want = r?.m2[k] || { g: 0, w1: 0 };
-    const got = mp.matchups[k] || { g: 0, w1: 0 };
-    if (want.g !== got.g || want.w1 !== got.w1 || got.w2 !== got.g - got.w1) okMU = false;
+    const want = r?.m2[k] || { g: 0, w: 0 };
+    const got = mp.matchups[k] || { g: 0, w: 0 };
+    if (want.g !== got.g || want.w !== got.w) okMU = false;
   }
-  if (!okStruct || !okMirror || !okMU) muBad++;
+  let okPair = true;
+  for (const [x, y] of PAIRS) {
+    const mx = mp.matchups[x], my = mp.matchups[y];
+    if (mx.g !== my.g || mx.w + my.w !== mx.g) okPair = false;
+  }
+  if (!okStruct || !okMirror || !okMU || !okPair) muBad++;
   muMirror += mp.mirror;
   console.log(`  ${mp.cn}(${mp.kr}) ${mp.games} 场 同族${mp.mirror} | `
-    + MU.map((k) => `${k} ${mp.matchups[k].g}场 ${mp.matchups[k].wr1 == null ? '—' : mp.matchups[k].wr1 + '%'}`).join(' · ')
-    + (okStruct && okMirror && okMU ? ' ✓' : ' ✗'));
+    + MU.map((k) => `${k} ${mp.matchups[k].g}场 ${mp.matchups[k].wr == null ? '—' : mp.matchups[k].wr + '%'}`).join(' · ')
+    + (okStruct && okMirror && okMU && okPair ? ' ✓' : ' ✗'));
 }
 console.log(`  合计 异族 ${mapGames - muMirror} 场 + 同族 ${muMirror} 场 = ${mapGames} 场`,
-  muBad === 0 ? '✓ 全部一致' : `✗ ${muBad} 张地图不一致`);
+  muBad === 0 ? '✓ 全部一致（含反向互补）' : `✗ ${muBad} 张地图不一致`);
 
 console.log('\n=== 重复检查 ===');
 const seen = new Set();

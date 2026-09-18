@@ -986,7 +986,7 @@ async function renderH2H(aId, bId) {
       <div class="section">
         <div class="section-head"><h2>交手记录</h2><span class="sub">${games.length} 场${games.length > H2H_MAX ? ` · 仅显示最近 ${H2H_MAX} 场` : ''}</span></div>
         <div class="table-wrap"><table id="h2hList">
-          <thead><tr><th></th><th>对阵</th><th>地图</th><th>日期</th><th>赛事</th><th>队伍</th><th class="num">ELO</th></tr></thead>
+          <thead><tr><th></th><th>对阵</th><th>地图</th><th>日期</th><th>赛事</th></tr></thead>
           <tbody>${games.slice(0, H2H_MAX).map((m) => {
         const win = m.w ? A : B, lose = m.w ? B : A;
         const season = !m.map || SEASON_MAPS.has(m.map);
@@ -996,8 +996,6 @@ async function renderH2H(aId, bId) {
               <td>${mapHTML(mapCn(m.map), m.map)}${season ? '' : '<span class="muted" style="font-size:11px"> 非本赛季</span>'}</td>
               <td class="muted">${esc(fmtDate(m.d))}</td>
               <td>${EVENTS[m.e] ? evHTML(m.e) : '<span class="muted">—</span>'}</td>
-              <td class="muted">${m.team ? `${esc(m.team)} vs ${esc(m.oteam || '')}` : '—'}</td>
-              <td class="num"><span class="elo ${m.elo == null ? 'na' : m.elo > 0 ? 'up' : 'dn'}">${m.elo == null ? '—' : (m.elo > 0 ? '+' : '') + m.elo.toFixed(1)}</span></td>
             </tr>`;
       }).join('')}</tbody>
         </table></div>
@@ -1017,7 +1015,15 @@ async function renderH2H(aId, bId) {
 async function viewMaps(app) {
   const idx = await loadIndex();
   const maps = state.maps;
-  const MU = idx.meta.matchups || ['ZvP', 'ZvT', 'PvT'];
+  const MU = idx.meta.matchups || ['ZvP', 'ZvT', 'PvZ', 'PvT', 'TvZ', 'TvP'];
+  const RACE_CN = { Z: '虫族', P: '神族', T: '人族' };
+  // 按第一个种族把对抗分成 Z / P / T 三组，表头两行（组名 + 具体方向）
+  const groups = [];
+  for (const k of MU) {
+    const race = k[0], last = groups[groups.length - 1];
+    if (last && last.race === race) last.cols.push(k);
+    else groups.push({ race, cols: [k] });
+  }
   app.innerHTML = `
     <div class="section-head"><h2>地图情报</h2>
       <span class="sub">仅本赛季（${esc(idx.meta.season?.label || '')}）地图 · 共 ${maps.length} 张</span></div>
@@ -1026,22 +1032,28 @@ async function viewMaps(app) {
       <span class="count" id="mapCount"></span>
     </div>
     <div class="table-wrap"><table id="mapTable">
-      <thead><tr><th>#</th><th>地图</th><th class="num">总场次</th>
-        ${MU.map((k) => `<th class="num">${esc(k)}</th>`).join('')}
-        <th class="num">同族</th></tr></thead>
+      <thead>
+        <tr>
+          <th rowspan="2">#</th><th rowspan="2">地图</th><th rowspan="2" class="num">总场次</th>
+          ${groups.map((g) => `<th colspan="${g.cols.length}" class="mu-group">${esc(RACE_CN[g.race] || g.race)} ${esc(g.race)}</th>`).join('')}
+          <th rowspan="2" class="num">同族</th>
+        </tr>
+        <tr>${groups.flatMap((g) => g.cols.map((k) => `<th class="num">${esc(k)}</th>`)).join('')}</tr>
+      </thead>
       <tbody></tbody></table></div>
     <div class="hint" style="margin-top:10px">
-      胜率为该对抗中<b>前者</b>的胜率（ZvP = 虫族对神族的胜率，ZvT = 虫族对人族，PvT = 神族对人族）；同族对抗（ZvZ / PvP / TvT）不计胜率。
+      每列只统计该方向中<b>前者</b>的胜率：ZvP = 虫族对神族的胜率，PvZ = 神族对虫族的胜率，依此类推。
+      互为反向的两列（如 ZvP / PvZ）场次相同、胜率互补合计 100%；同族对抗（ZvZ / PvP / TvT）不计胜率。
     </div>`;
 
   const muCell = (k, mm) => {
     if (!mm || !mm.g) return '<span class="mu-na">—</span>';
-    const wr = mm.wr1;
-    const cls = wr >= 55 ? 'up' : wr <= 45 ? 'dn' : 'mid';
+    const v = mm.wr;
+    const cls = v >= 55 ? 'up' : v <= 45 ? 'dn' : 'mid';
     const [a, b] = k.split('v');
-    return `<span class="mu ${cls}" title="${esc(k)} 共 ${mm.g} 场：${esc(a)} ${mm.w1} 胜 / ${esc(b)} ${mm.w2} 胜">${wr.toFixed(1)}%
+    return `<span class="mu ${cls}" title="${esc(k)} 共 ${mm.g} 场：${esc(a)} ${mm.w} 胜 / ${esc(b)} ${mm.g - mm.w} 胜">${v.toFixed(1)}%
         <span class="mu-cnt">${mm.g} 场</span>
-        <span class="mu-bar"><i style="width:${wr}%"></i></span></span>`;
+        <span class="mu-bar"><i style="width:${v}%"></i></span></span>`;
   };
 
   const draw = (q) => {

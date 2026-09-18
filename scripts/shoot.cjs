@@ -186,14 +186,19 @@ const pages = [
   const recRows = await page.locator('#h2hList tbody tr').count();
   check(`交手记录行数 = 交战场次 ${h2hGames.length}`, recRows === Math.min(h2hGames.length, 200), `${recRows} 行`);
   const recCells = await page.$$eval('#h2hList tbody tr:first-child td', (tds) => tds.length);
-  check('交手记录每行 7 列（结果/对阵/地图/日期/赛事/队伍/ELO）', recCells === 7, `${recCells} 列`);
+  check('交手记录每行 5 列（结果/对阵/地图/日期/赛事）', recCells === 5, `${recCells} 列`);
   check('交手记录已无两行布局（.mrow）', (await page.locator('#h2hBody .mrow').count()) === 0);
   check('交手记录含结果徽标', (await page.locator('#h2hList tbody tr:first-child td .res').count()) === 1);
   const recTxt = await page.locator('#h2hList tbody tr:first-child').innerText();
   console.log(`    首行: ${recTxt.replace(/\n/g, ' | ')}`);
   check('交手记录赛事显示中文名', /职业联赛|K联赛|半职业联赛/.test(recTxt), recTxt.replace(/\n/g, ' ').slice(0, 70));
   check('交手记录每行只占一行文本高度（无第二行 meta）',
-    recTxt.split('\n').length <= 7, `${recTxt.split('\n').length} 行文本`);
+    recTxt.split('\n').length <= 5, `${recTxt.split('\n').length} 行文本`);
+  // 元素截图会被固定顶栏盖住，先临时隐藏再截
+  await page.evaluate(() => { document.querySelector('.topbar').style.display = 'none'; });
+  await page.waitForTimeout(200);
+  await page.locator('#h2hList').screenshot({ path: path.join(OUT, 'h2h-records.png') }).catch(() => {});
+  await page.evaluate(() => { document.querySelector('.topbar').style.display = ''; });
 
   // 分地图交手只应包含本赛季地图
   const seasonAliases = new Set(idxJson.meta.season.aliases);
@@ -248,10 +253,11 @@ const pages = [
   check('每行都有中文译名（中文名 + 韩文原名）', mapKr.length === mapCount && mapKr.every((k) => seasonAliases.has(k)),
     mapKr.join(' / '));
 
-  // 地图情报：改为「总场次 + 分种族对抗胜率」，不再显示选手出场次数
+  // 地图情报：6 个方向的种族对抗胜率，不再显示选手出场次数
+  const MU6 = idxJson.meta.matchups;
   const mapHeads = await page.$$eval('#mapTable thead th', (ths) => ths.map((t) => t.textContent.trim()));
-  check('地图情报表头含 ZvP / ZvT / PvT',
-    ['ZvP', 'ZvT', 'PvT'].every((k) => mapHeads.includes(k)), mapHeads.join(' / '));
+  check(`地图情报表头含 6 个对抗方向 ${MU6.join('/')}`,
+    MU6.every((k) => mapHeads.includes(k)), mapHeads.join(' / '));
   check('地图情报不再显示「使用选手」「出场最多选手」',
     !mapHeads.some((h) => h.includes('选手')), mapHeads.join(' / '));
   const mapsJson = JSON.parse(fs.readFileSync(path.join(DATA, 'maps.json'), 'utf8'));
@@ -261,19 +267,29 @@ const pages = [
     return {
       kr: tr.querySelector('.kr-name')?.textContent.trim() || '',
       games: cells[2].innerText.trim(),
-      mu: cells.slice(3, 6).map((td) => td.innerText.trim().split('\n')[0]),
+      mu: cells.slice(3, 3 + 6).map((td) => td.innerText.trim().split('\n')[0]),
     };
   }));
   const muOk = mapStats.every((s) => {
     const m = byKr.get(s.kr);
     if (!m) return false;
     if (s.games !== String(m.games)) return false;
-    return ['ZvP', 'ZvT', 'PvT'].every((k, i) => (m.matchups[k].g === 0
+    return MU6.every((k, i) => (m.matchups[k].g === 0
       ? s.mu[i] === '—'
-      : s.mu[i] === m.matchups[k].wr1.toFixed(1) + '%'));
+      : s.mu[i] === m.matchups[k].wr.toFixed(1) + '%'));
   });
   check('地图情报每格胜率/场次与 maps.json 一致', muOk,
-    mapStats.map((s) => `${s.kr}:${s.mu.join(' ')}`).join(' | ').slice(0, 120));
+    mapStats.map((s) => `${s.kr}:${s.mu.join(' ')}`).join(' | ').slice(0, 140));
+  // 反向互补：ZvP 与 PvZ 胜率相加应为 100%（取第 1、3 列）
+  const pairOk = mapStats.every((s) => {
+    const m = byKr.get(s.kr);
+    return ['ZvP|PvZ', 'ZvT|TvZ', 'PvT|TvP'].every((p) => {
+      const [x, y] = p.split('|');
+      const a = m.matchups[x].wr, b = m.matchups[y].wr;
+      return Math.abs(a + b - 100) <= 0.2;
+    });
+  });
+  check('地图情报反向两列胜率互补（合计 100%）', pairOk);
 
   /* ---------- 选手详情 tabs ---------- */
   console.log('\n=== 选手详情 tabs ===');

@@ -10,6 +10,8 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 - 数据只保留 **2026-01-01 之后**（`build-db.mjs` 的 `CUTOFF` 常量）
 - 选手/地图译名以 `docs/` 下两份文档为准；文档未涉及的保留原韩文
 - 所有地图板块**只展示本赛季地图**（`SEASON_ROW_IDX` 指定的 7 张）
+- **赛事中文名（用户指定，非文档）**：`메이저 프로리그`→职业联赛、`K리그`→K联赛、
+  `준메이저 프로리그`→半职业联赛。前端一律用 `evHTML(id)` / `evZh(id)` 渲染，别再直出 `EVENTS[k].name`
 
 ## 改译名的流程
 1. 改 `docs/韩国选手名字.md` 或 `docs/地图翻译规则.md`
@@ -20,6 +22,9 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 - 单局粒度：一条 match = 双方各计一场，所以「选手场次总和 = 对局数 × 2」
 - `elo_delta` 恒为胜方正增益；`ELO 净变` 是本口径内的指标，`官方 ELO` 只是站点全局值
 - 日期筛选走 `daily.json` 的「日期 × 赛事」稀疏桶，前端二分后线性求和
+- **`maps.json` 按「对局」计数**（不是选手出场次数）：总场次 = 本赛季对局数，**不要再乘 2**
+- **地图对抗胜率**：规范顺序 `RACE_ORDER = {Z:0,P:1,T:2}`，`ZvP`/`ZvT`/`PvT` 的 `w1`
+  恒为规范顺序中**前者**的胜场（`ZvP.wr1` = 虫族胜率）；同族单列 `mirror` 不计胜率
 
 ## 环境坑（会反复踩，务必记住）
 - **沙箱内 `curl` 走系统代理会卡在 TLS 重协商（HTTP 000）**；抓取一律用 Node 原生 `fetch`
@@ -28,6 +33,7 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 - `ssh -T git@github.com` 会间歇性 Connection reset，推送需重试；`~/.ssh/config` 已映射到 `ssh.github.com:443`
 - Playwright 复用 `D:\WorkSpace\scplayer-stats\node_modules`，须指定 `executablePath` 指向 `chromium-1200`
 - 写脚本文件用 Write 工具，不要用 Bash heredoc（`${...}` 会被 shell 展开报 Bad substitution）
+- 手工提交推送统一走 `node scripts/git-backup.mjs --msg "feat: ..."`（自动 add -A + 提交 + 重试推送 + 校准追踪引用）
 
 ## 测试约定
 - `shoot.cjs` 的期望值必须**从构建产物（index.json 等）推导**，不要写死数字 —— 数据每天都在涨

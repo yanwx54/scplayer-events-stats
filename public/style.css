@@ -218,12 +218,10 @@ td .res.w{background:#e7f7ee;color:var(--win)}
 td .res.l{background:#fdecec;color:var(--loss)}
 /* 单行交手记录：结果徽标列窄一点，日期等次要信息淡化 */
 #h2hList td:first-child{width:46px;padding-right:4px}
-#h2hList td .elo{font-family:var(--mono);font-size:12px;font-weight:600}
-#h2hList td .elo.up{color:var(--win)}
-#h2hList td .elo.dn{color:var(--loss)}
-#h2hList td .elo.na{color:var(--text-3)}
 
 /* 地图情报：分种族对抗胜率单元格 */
+#mapTable thead th.mu-group{text-align:center;color:var(--text-3);border-bottom:1px solid var(--line)}
+#mapTable thead tr:nth-child(2) th{padding-top:6px;padding-bottom:8px}
 .mu{display:block;font-family:var(--mono);font-weight:600;font-size:13px;line-height:1.3}
 .mu.up{color:var(--win)}
 .mu.dn{color:var(--loss)}
