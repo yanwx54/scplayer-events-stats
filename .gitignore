@@ -7,6 +7,11 @@ data/raw/
 # 自检截图
 shots/
 
+# 部署机密与线上站点副本（令牌不入库）
+local.config.json
+deploy/deploy-token.txt
+deploy/site/
+
 # 杂项
 .DS_Store
 Thumbs.db
