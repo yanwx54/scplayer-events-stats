@@ -83,7 +83,7 @@ for (const [id, raw] of Object.entries(players)) {
     lastPlayed: raw.last_played_on || null,
     // 本统计口径（三赛事）
     games: 0, wins: 0, losses: 0,
-    byEvent: {}, byMap: {}, vsRace: {}, vsOpp: {},
+    byEvent: {}, byMap: {}, vsRace: {}, vsOpp: {}, byDay: {},
     firstDate: null, lastDate: null,
     eloNet: 0, eloGames: 0,
     monthly: {},
@@ -96,7 +96,7 @@ for (const m of matches) for (const p of m.participants) {
     P.set(p.player_id, {
       id: p.player_id, name: p.name, race: p.race, elo: null, avatar: null, college: null, soop: null,
       careerWins: null, careerLosses: null, lastPlayed: null,
-      games: 0, wins: 0, losses: 0, byEvent: {}, byMap: {}, vsRace: {}, vsOpp: {},
+      games: 0, wins: 0, losses: 0, byEvent: {}, byMap: {}, vsRace: {}, vsOpp: {}, byDay: {},
       firstDate: null, lastDate: null, eloNet: 0, eloGames: 0, monthly: {}, matches: [],
     });
   }
@@ -127,6 +127,11 @@ for (const m of matches) {
       if (!pl.lastDate || date > pl.lastDate) pl.lastDate = date;
       const mo = pl.monthly[month] || (pl.monthly[month] = { games: 0, wins: 0, losses: 0 });
       mo.games++; isWin ? mo.wins++ : mo.losses++;
+      // 按「日期 × 赛事」分桶：供「赛事 + 日期时间段」组合筛选的排行使用
+      const key = date + '|' + m.event_id;
+      const dy = pl.byDay[key] || (pl.byDay[key] = { date, event: m.event_id, games: 0, wins: 0, elo: 0 });
+      dy.games++; if (isWin) dy.wins++;
+      if (typeof m.elo_delta === 'number') dy.elo += isWin ? m.elo_delta : -m.elo_delta;
     }
     if (typeof m.elo_delta === 'number') {
       pl.eloNet += isWin ? m.elo_delta : -m.elo_delta;
@@ -281,6 +286,30 @@ const index_out = {
 await mkdir(OUT, { recursive: true });
 await writeFile(path.join(OUT, 'index.json'), JSON.stringify(index_out));
 await writeFile(path.join(OUT, 'maps.json'), JSON.stringify(maps));
+
+/* ---------- 按「日期 × 赛事」分桶（供时间段筛选，单独按需加载） ---------- */
+const allDays = new Set();
+for (const pl of P.values()) for (const b of Object.values(pl.byDay)) allDays.add(b.date);
+const dayList = [...allDays].sort();
+const dayIdx = new Map(dayList.map((d, i) => [d, i]));
+
+const dailyP = {};
+let bucketCount = 0;
+for (const pl of P.values()) {
+  if (pl.games === 0) continue;
+  // [赛事id, 日期下标, 场次, 胜场, ELO净变]
+  const buckets = Object.values(pl.byDay)
+    .map((v) => [v.event, dayIdx.get(v.date), v.games, v.wins, Math.round(v.elo * 10) / 10])
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  dailyP[pl.id] = buckets;
+  bucketCount += buckets.length;
+}
+await writeFile(path.join(OUT, 'daily.json'), JSON.stringify({
+  meta: { first: dayList[0], last: dayList.at(-1), days: dayList.length, buckets: bucketCount },
+  days: dayList,
+  p: dailyP,
+}));
+console.log('daily.json:', dayList.length, '天 /', bucketCount, '个日-赛事桶 /', Object.keys(dailyP).length, '名选手');
 console.log('players written:', index.length);
 console.log('meta:', JSON.stringify(index_out.meta));
 console.log('events:', JSON.stringify(eventMeta));

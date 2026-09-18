@@ -163,7 +163,20 @@ input[type=search],input[type=text],select{
   border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:8px 13px;
   font-size:13.5px;outline:none;transition:.15s;min-width:150px;
 }
+input[type=date]{
+  border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:7px 11px;
+  font-size:13px;outline:none;transition:.15s;font-family:var(--mono);color:var(--text);
+}
+input[type=date]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 input[type=search]:focus,input[type=text]:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+
+/* 日期时间段 */
+.range-bar{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:10px 14px;box-shadow:var(--shadow-sm);
+}
+.range-inputs{display:inline-flex;align-items:center;gap:8px}
+.range-sep{color:var(--text-3);font-size:12px}
 .count{font-size:12.5px;color:var(--text-3);margin-left:auto}
 
 /* ===== 选手详情 ===== */

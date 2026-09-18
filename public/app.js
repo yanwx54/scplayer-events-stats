@@ -15,12 +15,13 @@ const RACE_EN = { T: 'Terran', Z: 'Zerg', P: 'Protoss' };
 const state = {
   index: null,
   maps: null,
+  daily: null,
   playerCache: new Map(),
   playerSort: { key: 'games', dir: -1 },
-  playerFilter: { event: 0, race: '', q: '', min: 0 },
+  playerFilter: { event: 0, race: '', q: '', min: 0, from: null, to: null },
   detailTab: 'overview',
   detailPage: 0,
-  h2h: { a: null, b: null },
+  h2h: { a: null, b: null, from: null, to: null },
 };
 
 /* ---------- 工具 ---------- */
@@ -65,6 +66,132 @@ async function loadPlayer(id) {
   const d = await fetch(`data/players/${id}.json`).then((r) => r.json());
   state.playerCache.set(id, d);
   return d;
+}
+async function loadDaily() {
+  if (state.daily) return state.daily;
+  state.daily = await fetch('data/daily.json').then((r) => r.json());
+  return state.daily;
+}
+
+/* ============================================================
+   日期时间段
+   ============================================================ */
+const RANGE_PRESETS = [
+  ['all', '全部'],
+  ['30', '近 30 天'],
+  ['90', '近 90 天'],
+  ['180', '近半年'],
+  ['365', '近 1 年'],
+];
+
+/** days 中第一个 >= date 的下标 */
+function lowerBound(days, date) {
+  let lo = 0, hi = days.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (days[m] < date) lo = m + 1; else hi = m; }
+  return lo;
+}
+/** days 中最后一个 <= date 的下标 */
+function upperBound(days, date) {
+  let lo = 0, hi = days.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (days[m] <= date) lo = m + 1; else hi = m; }
+  return lo - 1;
+}
+
+/**
+ * 在某个选手的分日桶上求和。
+ * buckets 形如 [[赛事id, 日期下标, 场次, 胜场, ELO净变], …] 按日期下标升序。
+ * eventId 为 0/null 表示不限赛事。
+ */
+function sumBuckets(buckets, lo, hi, eventId) {
+  let g = 0, w = 0, elo = 0;
+  if (buckets) {
+    for (const [e, d, gg, ww, ee] of buckets) {
+      if (eventId && e !== eventId) continue;
+      if (d < lo || d > hi) continue;
+      g += gg; w += ww; elo += ee;
+    }
+  }
+  return {
+    games: g, wins: w, losses: g - w,
+    wr: g ? Math.round((w / g) * 1000) / 10 : 0,
+    eloNet: Math.round(elo * 10) / 10,
+  };
+}
+
+function rangeBarHTML(id, from, to, first, last) {
+  return `
+    <div class="filters range-bar" id="${id}">
+      <div class="seg" data-role="presets">
+        ${RANGE_PRESETS.map(([k, t]) => `<button data-range="${k}">${t}</button>`).join('')}
+      </div>
+      <div class="range-inputs">
+        <input type="date" data-role="from" min="${first}" max="${last}" value="${from}">
+        <span class="range-sep">~</span>
+        <input type="date" data-role="to" min="${first}" max="${last}" value="${to}">
+      </div>
+      <span class="count" data-role="info"></span>
+    </div>`;
+}
+
+/**
+ * 绑定日期区间控件。
+ * onApply(from, to) 在区间变化时被调用（from/to 为 YYYY-MM-DD）。
+ */
+function bindRangeBar(rootId, first, last, getRange, onApply) {
+  const root = $('#' + rootId);
+  if (!root) return;
+  const fromEl = root.querySelector('[data-role="from"]');
+  const toEl = root.querySelector('[data-role="to"]');
+  const infoEl = root.querySelector('[data-role="info"]');
+  const presetsEl = root.querySelector('[data-role="presets"]');
+
+  const shiftDays = (n) => {
+    const d = new Date(last + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - n);
+    const s = d.toISOString().slice(0, 10);
+    return s < first ? first : s;
+  };
+
+  const sync = () => {
+    const { from, to } = getRange();
+    fromEl.value = from; toEl.value = to;
+    const isAll = from <= first && to >= last;
+    $$('button', presetsEl).forEach((b) => {
+      const k = b.dataset.range;
+      const on = k === 'all'
+        ? isAll
+        : !isAll && from === shiftDays(Number(k)) && to >= last;
+      b.classList.toggle('on', on);
+    });
+    if (infoEl) {
+      infoEl.textContent = isAll
+        ? `全部 ${first} ~ ${last}`
+        : `${from} ~ ${to}`;
+    }
+  };
+
+  presetsEl.onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const k = b.dataset.range;
+    const from = k === 'all' ? first : shiftDays(Number(k));
+    onApply(from, last);
+    sync();
+  };
+  const commit = () => {
+    let from = fromEl.value || first;
+    let to = toEl.value || last;
+    if (from > to) { [from, to] = [to, from]; }
+    onApply(from, to);
+    sync();
+  };
+  fromEl.onchange = commit;
+  toEl.onchange = commit;
+  sync();
+}
+
+/** 判断区间是否覆盖全部数据 */
+function isFullRange(from, to, first, last) {
+  return from <= first && to >= last;
 }
 
 /* ============================================================
@@ -201,8 +328,15 @@ function wrCell(wr) {
    ============================================================ */
 async function viewPlayers(app, params) {
   const idx = await loadIndex();
-  if (params.get('event')) state.playerFilter.event = Number(params.get('event'));
+  const daily = await loadDaily();
+  // URL 为唯一事实来源：带 ?event= 则采用，否则一律回到「全部赛事」
+  // （否则从首页事件卡片 #/players?event=43 进入后，再点导航「选手排行」会残留筛选）
+  const evParam = Number(params.get('event'));
+  state.playerFilter.event = Number.isInteger(evParam) && evParam > 0 ? evParam : 0;
   const f = state.playerFilter;
+  const FIRST = idx.meta.first, LAST = idx.meta.last;
+  if (!f.from) f.from = FIRST;
+  if (!f.to) f.to = LAST;
 
   app.innerHTML = `
     <div class="section-head"><h2>选手排行</h2><span class="sub">共 ${nf(idx.players.length)} 名选手 · 点击表头排序</span></div>
@@ -224,34 +358,53 @@ async function viewPlayers(app, params) {
       </div>
       <span class="count" id="count"></span>
     </div>
+    ${rangeBarHTML('segRange', f.from, f.to, FIRST, LAST)}
     <div id="plist"></div>`;
 
-  $('#segEvent').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; f.event = Number(b.dataset.ev); renderPlayerTable(); };
+  $('#segEvent').onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    f.event = Number(b.dataset.ev);
+    // 同步地址栏（replaceState 不触发 hashchange，不会引起整页重渲染）
+    history.replaceState(null, '', `#/players${f.event ? `?event=${f.event}` : ''}`);
+    renderPlayerTable();
+  };
   $('#segRace').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; f.race = b.dataset.race; renderPlayerTable(); };
   $('#segMin').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; f.min = Number(b.dataset.min); renderPlayerTable(); };
   $('#q').oninput = (e) => { f.q = e.target.value; renderPlayerTable(); };
 
-  // 依据当前赛事筛选，投影出用于展示/排序的数值
+  // 当前日期区间 → 日期下标区间
+  const dayRange = () => {
+    const lo = Math.max(0, lowerBound(daily.days, f.from));
+    const hi = upperBound(daily.days, f.to);
+    return { lo, hi };
+  };
+
+  // 依据「赛事 + 日期区间」投影出用于展示/排序的数值
   function view(p) {
-    if (!f.event) return { games: p.games, wins: p.wins, losses: p.losses, wr: p.wr };
-    const v = p.ev?.[f.event];
-    if (!v) return { games: 0, wins: 0, losses: 0, wr: 0 };
-    return { games: v.g, wins: v.w, losses: v.l, wr: v.g ? Math.round((v.w / v.g) * 1000) / 10 : 0 };
+    const { lo, hi } = dayRange();
+    if (isFullRange(f.from, f.to, FIRST, LAST) && !f.event) {
+      return { games: p.games, wins: p.wins, losses: p.losses, wr: p.wr, eloNet: p.eloNet };
+    }
+    return sumBuckets(daily.p[p.id], lo, hi, f.event || 0);
   }
 
   function renderPlayerTable() {
     $$('#segEvent button').forEach((b) => b.classList.toggle('on', Number(b.dataset.ev) === f.event));
     $$('#segRace button').forEach((b) => b.classList.toggle('on', b.dataset.race === f.race));
     $$('#segMin button').forEach((b) => b.classList.toggle('on', Number(b.dataset.min) === f.min));
+    const rangeActive = !isFullRange(f.from, f.to, FIRST, LAST);
+    const { lo, hi } = dayRange();
+
     const rows = idx.players
       .filter((p) => (!f.race || p.race === f.race))
-      .filter((p) => view(p).games >= f.min)
-      .filter((p) => !f.q || p.name.includes(f.q) || String(p.id) === f.q)
-      .sort((a, b) => {
+      .map((p) => ({ p, v: view(p) }))
+      .filter((x) => x.v.games >= f.min)
+      .filter((x) => !f.q || x.p.name.includes(f.q) || String(x.p.id) === f.q)
+      .sort((A, B) => {
         const k = state.playerSort.key, d = state.playerSort.dir;
         let va, vb;
-        if (k === 'games' || k === 'wr' || k === 'wins') { va = view(a)[k]; vb = view(b)[k]; }
-        else { va = a[k] ?? -1; vb = b[k] ?? -1; }
+        if (k === 'games' || k === 'wr' || k === 'wins' || k === 'eloNet') { va = A.v[k] ?? -1; vb = B.v[k] ?? -1; }
+        else { va = A.p[k] ?? -1; vb = B.p[k] ?? -1; }
         if (typeof va === 'string') return va.localeCompare(vb) * d;
         return (va - vb) * d;
       });
@@ -261,27 +414,28 @@ async function viewPlayers(app, params) {
       ['name', '选手', 0], ['race', '种族', 0],
       ['games', f.event ? EVENTS[f.event].short + ' 场次' : '出场', 1],
       ['wins', '胜 / 负', 1],
-      ['wr', '胜率', 1], ['elo', '官方 ELO', 1], ['eloNet', 'ELO 净变', 1],
+      ['wr', '胜率', 1], ['eloNet', 'ELO 净变', 1], ['elo', '官方 ELO', 1],
     ];
     $('#plist').innerHTML = `
       <div class="table-wrap"><table>
         <thead><tr><th>#</th>${cols.map(([k, t, num]) =>
       `<th class="sortable ${state.playerSort.key === k ? 'sorted' : ''} ${num ? 'num' : ''}" data-k="${k}">${t} <span class="arrow">${state.playerSort.key === k ? (state.playerSort.dir === 1 ? '▲' : '▼') : '↕'}</span></th>`).join('')}
-        <th class="num">最近 10 场</th></tr></thead>
-        <tbody>${rows.slice(0, 400).map((p, i) => { const v = view(p); return `
+        <th class="num" title="基于全部数据统计，不受上方时间段与赛事筛选影响">近 10 场</th></tr></thead>
+        <tbody>${rows.slice(0, 400).map((x, i) => { const { p, v } = x; return `
           <tr class="clickable" onclick="location.hash='#/player/${p.id}'">
             <td><span class="rank">${i + 1}</span></td>
             <td><div class="pname">${avatar(p)}${esc(p.name)}</div></td>
             <td>${racePill(p.race)}</td>
             <td class="num">${nf(v.games)}</td>
             <td class="num"><span style="color:var(--win)">${nf(v.wins)}</span> / <span style="color:var(--loss)">${nf(v.losses)}</span></td>
-            <td class="num">${wrCell(v.wr)}</td>
+            <td class="num">${v.games ? wrCell(v.wr) : '<span class="muted">—</span>'}</td>
+            <td class="num" style="color:${(v.eloNet ?? 0) >= 0 ? 'var(--win)' : 'var(--loss)'}">${v.eloNet == null ? '—' : (v.eloNet > 0 ? '+' : '') + v.eloNet.toFixed(1)}</td>
             <td class="num">${p.elo ? p.elo.toFixed(1) : '—'}</td>
-            <td class="num" style="color:${(p.eloNet ?? 0) >= 0 ? 'var(--win)' : 'var(--loss)'}">${p.eloNet == null ? '—' : (p.eloNet > 0 ? '+' : '') + p.eloNet.toFixed(1)}</td>
             <td class="num">${p.recentGames ? `${p.recentWins} / ${p.recentGames}` : '—'}</td>
           </tr>`; }).join('')}</tbody>
       </table></div>
-      ${rows.length > 400 ? `<div class="hint" style="padding:10px">仅显示前 400 名，请使用筛选缩小范围。</div>` : ''}`;
+      ${rows.length > 400 ? `<div class="hint" style="padding:10px">仅显示前 400 名，请使用筛选缩小范围。</div>` : ''}
+      ${rangeActive ? `<div class="hint" style="padding:0 10px 10px">已按时间段 ${esc(f.from)} ~ ${esc(f.to)} 统计（覆盖 ${hi - lo + 1} 个比赛日）</div>` : ''}`;
 
     $$('#plist th.sortable').forEach((th) => {
       th.onclick = () => {
@@ -292,6 +446,11 @@ async function viewPlayers(app, params) {
       };
     });
   }
+
+  bindRangeBar('segRange', FIRST, LAST, () => ({ from: f.from, to: f.to }), (from, to) => {
+    f.from = from; f.to = to;
+    renderPlayerTable();
+  });
   renderPlayerTable();
 }
 
@@ -672,83 +831,109 @@ async function renderH2H(aId, bId) {
   const host = $('#h2hResult');
   host.innerHTML = '<div class="loading">加载中…</div>';
   const [A, B] = await Promise.all([loadPlayer(aId), loadPlayer(bId)]);
-  const games = A.matches.filter((m) => m.o === bId).slice().sort((x, y) => (y.d || '').localeCompare(x.d || ''));
-  const aw = games.filter((g) => g.w).length, bw = games.length - aw;
-
-  const byMap = {}, byEvent = {};
-  for (const g of games) {
-    const mk = g.map || '?';
-    (byMap[mk] || (byMap[mk] = { games: 0, a: 0, b: 0 })).games++;
-    byMap[mk][g.w ? 'a' : 'b']++;
-    const ek = g.e;
-    (byEvent[ek] || (byEvent[ek] = { games: 0, a: 0, b: 0 })).games++;
-    byEvent[ek][g.w ? 'a' : 'b']++;
+  const allGames = A.matches.filter((m) => m.o === bId).slice().sort((x, y) => (y.d || '').localeCompare(x.d || ''));
+  const FIRST = state.index.meta.first, LAST = state.index.meta.last;
+  // 换了一对选手就把时间段重置为全部，避免沿用上一对的窄区间造成"无记录"的困惑
+  const pairKey = `${aId}|${bId}`;
+  if (state.h2h.pair !== pairKey) {
+    state.h2h.pair = pairKey;
+    state.h2h.from = null;
+    state.h2h.to = null;
   }
-  const mapRows = Object.entries(byMap).map(([k, v]) => ({ kr: k, cn: state.index?.mapCn?.[k] || k, ...v })).sort((x, y) => y.games - x.games);
-  const tot = games.length || 1;
+  if (!state.h2h.from) state.h2h.from = FIRST;
+  if (!state.h2h.to) state.h2h.to = LAST;
 
-  host.innerHTML = `
-    <div class="card h2h-head">
-      <div class="h2h-side">
-        ${avatar(A, 'big-av')}
-        <b>${esc(A.name)}</b>${racePill(A.race)}
-        <span class="muted" style="font-size:12px">三赛事 ${nf(A.games)} 场 · ${A.wr.toFixed(1)}%</span>
-      </div>
-      <div>
-        <div class="h2h-score">${aw} : ${bw}<small>交手 ${games.length} 场</small></div>
-        <div class="h2h-bar"><i class="a" style="width:${(aw / tot) * 100}%"></i><i class="b" style="width:${(bw / tot) * 100}%"></i></div>
-      </div>
-      <div class="h2h-side">
-        ${avatar(B, 'big-av')}
-        <b>${esc(B.name)}</b>${racePill(B.race)}
-        <span class="muted" style="font-size:12px">三赛事 ${nf(B.games)} 场 · ${B.wr.toFixed(1)}%</span>
-      </div>
-    </div>
+  host.innerHTML = rangeBarHTML('h2hRange', state.h2h.from, state.h2h.to, FIRST, LAST)
+    + '<div id="h2hBody"></div>';
 
-    ${games.length === 0 ? '<div class="empty">两人在这三个赛事中没有交手记录</div>' : `
-    <div class="grid c2" style="margin-top:16px">
-      <div class="card" style="padding:17px">
-        <div class="section-head"><h2 style="font-size:14.5px">分地图交手</h2><span class="sub">${mapRows.length} 张地图</span></div>
-        <table><thead><tr><th>地图</th><th class="num">场次</th><th class="num">${esc(A.name)}</th><th class="num">${esc(B.name)}</th></tr></thead>
-        <tbody>${mapRows.map((m) => `
-          <tr><td><b>${esc(m.cn)}</b> <span class="muted" style="font-size:11px">${esc(m.kr)}</span></td>
-          <td class="num">${m.games}</td>
-          <td class="num" style="color:var(--win);font-weight:600">${m.a}</td>
-          <td class="num" style="color:var(--loss);font-weight:600">${m.b}</td></tr>`).join('')}
-        </tbody></table>
-      </div>
-      <div class="card" style="padding:17px">
-        <div class="section-head"><h2 style="font-size:14.5px">分赛事交手</h2></div>
-        <table><thead><tr><th>赛事</th><th class="num">场次</th><th class="num">${esc(A.name)}</th><th class="num">${esc(B.name)}</th></tr></thead>
-        <tbody>${Object.entries(byEvent).map(([k, v]) => `
-          <tr><td>${esc(EVENTS[k]?.name || k)}</td><td class="num">${v.games}</td>
-          <td class="num" style="color:var(--win);font-weight:600">${v.a}</td>
-          <td class="num" style="color:var(--loss);font-weight:600">${v.b}</td></tr>`).join('')}
-        </tbody></table>
-        <div class="section-head" style="margin:20px 0 10px"><h2 style="font-size:14.5px">最近 20 次交手</h2></div>
-        <div style="display:flex;gap:5px;flex-wrap:wrap">
-          ${games.slice(0, 20).map((g) => `<span class="pill ${g.w ? 'win' : 'loss'}" title="${esc(g.d)} · ${esc(g.map || '')} · ${g.w ? A.name : B.name} 胜">${g.w ? 'A' : 'B'}</span>`).join('')}
+  const draw = () => {
+    const { from, to } = state.h2h;
+    const games = allGames.filter((m) => m.d && m.d >= from && m.d <= to);
+    const aw = games.filter((g) => g.w).length, bw = games.length - aw;
+    const tot = games.length || 1;
+
+    const byMap = {}, byEvent = {};
+    for (const g of games) {
+      const mk = g.map || '?';
+      (byMap[mk] || (byMap[mk] = { games: 0, a: 0, b: 0 })).games++;
+      byMap[mk][g.w ? 'a' : 'b']++;
+      const ek = g.e;
+      (byEvent[ek] || (byEvent[ek] = { games: 0, a: 0, b: 0 })).games++;
+      byEvent[ek][g.w ? 'a' : 'b']++;
+    }
+    const mapRows = Object.entries(byMap)
+      .map(([k, v]) => ({ kr: k, cn: state.index?.mapCn?.[k] || k, ...v }))
+      .sort((x, y) => y.games - x.games);
+
+    $('#h2hBody').innerHTML = `
+      <div class="card h2h-head">
+        <div class="h2h-side">
+          ${avatar(A, 'big-av')}
+          <b>${esc(A.name)}</b>${racePill(A.race)}
+          <span class="muted" style="font-size:12px">三赛事 ${nf(A.games)} 场 · ${A.wr.toFixed(1)}%</span>
         </div>
-        <div class="hint" style="margin-top:10px">A = ${esc(A.name)}　B = ${esc(B.name)}（左起为最近）</div>
+        <div>
+          <div class="h2h-score">${aw} : ${bw}<small>交手 ${games.length} 场</small></div>
+          <div class="h2h-bar"><i class="a" style="width:${(aw / tot) * 100}%"></i><i class="b" style="width:${(bw / tot) * 100}%"></i></div>
+        </div>
+        <div class="h2h-side">
+          ${avatar(B, 'big-av')}
+          <b>${esc(B.name)}</b>${racePill(B.race)}
+          <span class="muted" style="font-size:12px">三赛事 ${nf(B.games)} 场 · ${B.wr.toFixed(1)}%</span>
+        </div>
       </div>
-    </div>
 
-    <div class="section">
-      <div class="section-head"><h2>全部交手记录</h2><span class="sub">${games.length} 场${games.length > H2H_MAX ? ` · 仅显示最近 ${H2H_MAX} 场` : ''}</span></div>
-      <div class="table-wrap"><div class="mlist">
-        ${games.slice(0, H2H_MAX).map((m) => `
-          <div class="mrow">
-            <span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span>
-            <div>
-              <div class="who"><b>${esc(A.name)}</b> <span class="muted">vs</span> <b>${esc(B.name)}</b>
-                <span class="mapname">· ${esc(state.index?.mapCn?.[m.map] || m.map || '未知地图')}</span></div>
-              <div class="meta"><span>${esc(fmtDate(m.d))}</span><span>${esc(EVENTS[m.e]?.name || '')}</span>
-                ${m.team ? `<span>${esc(m.team)} vs ${esc(m.oteam || '')}</span>` : ''}</div>
-            </div>
-            <span class="elo ${m.elo == null ? 'na' : m.elo > 0 ? 'up' : 'dn'}">${m.elo == null ? '—' : (m.elo > 0 ? '+' : '') + m.elo.toFixed(1)}</span>
-          </div>`).join('')}
-      </div></div>
-    </div>`}`;
+      ${games.length === 0 ? `<div class="empty">该时间段内没有交手记录${allGames.length ? `（全部时间共 ${allGames.length} 场）` : ''}</div>` : `
+      <div class="grid c2" style="margin-top:16px">
+        <div class="card" style="padding:17px">
+          <div class="section-head"><h2 style="font-size:14.5px">分地图交手</h2><span class="sub">${mapRows.length} 张地图</span></div>
+          <table><thead><tr><th>地图</th><th class="num">场次</th><th class="num">${esc(A.name)}</th><th class="num">${esc(B.name)}</th></tr></thead>
+          <tbody>${mapRows.map((m) => `
+            <tr><td><b>${esc(m.cn)}</b> <span class="muted" style="font-size:11px">${esc(m.kr)}</span></td>
+            <td class="num">${m.games}</td>
+            <td class="num" style="color:var(--win);font-weight:600">${m.a}</td>
+            <td class="num" style="color:var(--loss);font-weight:600">${m.b}</td></tr>`).join('')}
+          </tbody></table>
+        </div>
+        <div class="card" style="padding:17px">
+          <div class="section-head"><h2 style="font-size:14.5px">分赛事交手</h2></div>
+          <table><thead><tr><th>赛事</th><th class="num">场次</th><th class="num">${esc(A.name)}</th><th class="num">${esc(B.name)}</th></tr></thead>
+          <tbody>${Object.entries(byEvent).map(([k, v]) => `
+            <tr><td>${esc(EVENTS[k]?.name || k)}</td><td class="num">${v.games}</td>
+            <td class="num" style="color:var(--win);font-weight:600">${v.a}</td>
+            <td class="num" style="color:var(--loss);font-weight:600">${v.b}</td></tr>`).join('')}
+          </tbody></table>
+          <div class="section-head" style="margin:20px 0 10px"><h2 style="font-size:14.5px">最近 20 次交手</h2></div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">
+            ${games.slice(0, 20).map((g) => `<span class="pill ${g.w ? 'win' : 'loss'}" title="${esc(g.d)} · ${esc(state.index?.mapCn?.[g.map] || g.map || '')} · ${g.w ? A.name : B.name} 胜">${g.w ? 'A' : 'B'}</span>`).join('')}
+          </div>
+          <div class="hint" style="margin-top:10px">A = ${esc(A.name)}　B = ${esc(B.name)}（左起为最近）</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>交手记录</h2><span class="sub">${games.length} 场${games.length > H2H_MAX ? ` · 仅显示最近 ${H2H_MAX} 场` : ''}</span></div>
+        <div class="table-wrap"><div class="mlist">
+          ${games.slice(0, H2H_MAX).map((m) => `
+            <div class="mrow">
+              <span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span>
+              <div>
+                <div class="who"><b>${esc(A.name)}</b> <span class="muted">vs</span> <b>${esc(B.name)}</b>
+                  <span class="mapname">· ${esc(state.index?.mapCn?.[m.map] || m.map || '未知地图')}</span></div>
+                <div class="meta"><span>${esc(fmtDate(m.d))}</span><span>${esc(EVENTS[m.e]?.name || '')}</span>
+                  ${m.team ? `<span>${esc(m.team)} vs ${esc(m.oteam || '')}</span>` : ''}</div>
+              </div>
+              <span class="elo ${m.elo == null ? 'na' : m.elo > 0 ? 'up' : 'dn'}">${m.elo == null ? '—' : (m.elo > 0 ? '+' : '') + m.elo.toFixed(1)}</span>
+            </div>`).join('')}
+        </div></div>
+      </div>`}`;
+  };
+
+  bindRangeBar('h2hRange', FIRST, LAST, () => ({ from: state.h2h.from, to: state.h2h.to }), (from, to) => {
+    state.h2h.from = from; state.h2h.to = to;
+    draw();
+  });
+  draw();
 }
 
 /* ============================================================

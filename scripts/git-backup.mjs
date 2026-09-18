@@ -29,6 +29,17 @@ const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),
 
 const log = (...a) => console.log('  [git]', ...a);
 
+/**
+ * 按改动内容生成提交类型前缀：只有数据/头像变化才算 chore(data)，
+ * 涉及脚本、样式、文档等则用 chore，避免历史里出现「改了脚本却写每日同步」的误导信息。
+ */
+const commitType = (files) => {
+  const dataOnly = files.every(
+    (f) => f.startsWith('public/data/') || f.startsWith('public/avatars/') || f.startsWith('data/'),
+  );
+  return dataOnly ? 'chore(data)' : 'chore';
+};
+
 /* ---------- 0. 前置检查 ---------- */
 const branch = git(['branch', '--show-current']);
 if (!branch) { console.error('GIT_BACKUP_FAILED: 当前不在任何分支上'); process.exit(1); }
@@ -53,7 +64,7 @@ if (hasChanges) {
   const d = new Date();
   const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const msg = [
-    `chore(data): 每日同步 ${stamp}`,
+    `${commitType(files)}: 同步 ${stamp}`,
     '',
     stat || `${files.length} 个文件变更`,
     '',
