@@ -270,6 +270,11 @@ td .res.l{background:#fdecec;color:var(--loss)}
 .chart .line{fill:none;stroke:var(--accent);stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round}
 .chart .area{fill:url(#grad);opacity:.5}
 .chart .dot{fill:#fff;stroke:var(--accent);stroke-width:2}
+/* ELO 折线（右轴）：与胜率线区分开，未结算月份用虚线空心点 */
+.chart .line.elo{stroke:#e08a00;stroke-width:1.8;stroke-dasharray:5 3}
+.chart .dot.elo{fill:#fff;stroke:#e08a00;stroke-width:1.8}
+.chart .dot.elo.pending{fill:#fff;stroke-dasharray:2 1.6}
+.chart .lbl.elo{fill:#c47c00;font-weight:600}
 
 /* ===== H2H ===== */
 .h2h-pick{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:center}

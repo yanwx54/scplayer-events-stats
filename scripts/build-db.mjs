@@ -226,8 +226,12 @@ for (const m of matches) {
     if (date) {
       if (!pl.firstDate || date < pl.firstDate) pl.firstDate = date;
       if (!pl.lastDate || date > pl.lastDate) pl.lastDate = date;
-      const mo = pl.monthly[month] || (pl.monthly[month] = { games: 0, wins: 0, losses: 0 });
+      const mo = pl.monthly[month] || (pl.monthly[month] = { games: 0, wins: 0, losses: 0, eloChg: 0, eloGames: 0 });
       mo.games++; isWin ? mo.wins++ : mo.losses++;
+      if (typeof m.elo_delta === 'number') {
+        mo.eloChg += isWin ? m.elo_delta : -m.elo_delta;   // 当月 ELO 净变
+        mo.eloGames++;
+      }
       // 按「日期 × 赛事」分桶：供「赛事 + 日期时间段」组合筛选的排行使用
       const key = date + '|' + m.event_id;
       const dy = pl.byDay[key] || (pl.byDay[key] = { date, event: m.event_id, games: 0, wins: 0, elo: 0 });
@@ -293,7 +297,27 @@ for (const pl of P.values()) {
   }).filter((e) => e.games > 0);
 
   const monthly = Object.entries(pl.monthly).sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([mo, v]) => ({ m: mo, ...v, wr: wr(v.wins, v.games) }));
+    .map(([mo, v]) => ({
+      m: mo,
+      games: v.games, wins: v.wins, losses: v.losses, wr: wr(v.wins, v.games),
+      eloChg: v.eloGames ? Math.round(v.eloChg * 10) / 10 : null,   // 当月 ELO 净变
+    }));
+
+  /**
+   * 月末 ELO：以「选手当前官方 ELO」为锚点，向前减去之后各月的净变倒推。
+   * eloEnd(M) = 当前 ELO − Σ(月份晚于 M 的 eloChg)
+   * 站点对尚未结算的对局不返回 elo_delta（如 2026-09 全部缺失），此时该月净变记 0，
+   * 与「官方 ELO 也尚未变动」一致，不会凭空造出涨幅。
+   */
+  if (pl.elo) {
+    let after = 0;
+    for (let i = monthly.length - 1; i >= 0; i--) {
+      monthly[i].eloEnd = Math.round((pl.elo - after) * 10) / 10;
+      after += monthly[i].eloChg || 0;
+    }
+  } else {
+    for (const mo of monthly) mo.eloEnd = null;
+  }
 
   // 长期趋势：按月聚合，用于折线图
   const detail = {

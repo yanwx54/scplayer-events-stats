@@ -91,15 +91,30 @@ function mapHTML(cn, kr) {
 }
 const mapCn = (kr) => state.index?.mapCn?.[kr] || kr || '未知地图';
 
-/** 对局记录中的地图标签：中文名 + 小号韩文；非本赛季地图额外标注 */
-function mapTag(kr) {
-  const c = mapCn(kr), k = kr || '';
-  const season = !k || SEASON_MAPS.has(k);
-  const krPart = k && c !== k ? `<span class="kr-name">${esc(k)}</span>` : '';
-  return `<span class="mapname"${season ? '' : ' title="非本赛季地图，不计入地图统计"'}>· ${esc(c)}${krPart}${season ? '' : ' <span class="muted">·非本赛季</span>'}</span>`;
-}
 /** 地图搜索文本（韩文 + 中文） */
 const mapSearchText = (kr) => norm(`${kr || ''} ${mapCn(kr)}`);
+
+/** 「单行记录」共用的列：结果徽标 / 日期 / 对阵 / 地图 */
+const REC_COLS = ['', '日期', '对阵', '地图'];
+
+/**
+ * 「单行记录」两栏表格：先填满第一栏，再排第二栏（第一栏放最新的记录）。
+ * 每栏是一张独立表格、各自带表头 —— 这样栏内列宽能对齐，也能精确控制「列优先」；
+ * 用 CSS column-count 会按内容高度自动断列，行宽会歪。
+ * 外层容器需带 class="h2h-cols"（两栏 grid）。
+ */
+function recColsHTML(list, cols, rowFn, emptyText) {
+  const head = `<thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>`;
+  const empty = `<tr><td colspan="${cols.length}" class="empty">${esc(emptyText || '暂无记录')}</td></tr>`;
+  if (!list.length) {
+    return `<div class="table-wrap" style="grid-column:1/-1"><table class="recTbl">${head}<tbody>${empty}</tbody></table></div>`;
+  }
+  const half = Math.ceil(list.length / 2);
+  return [list.slice(0, half), list.slice(half)].map((g, gi) => `
+    <div class="table-wrap"><table class="recTbl">${head}
+      <tbody>${g.map(rowFn).join('') || (gi === 0 ? empty : '')}</tbody>
+    </table></div>`).join('');
+}
 
 /* ---------- 数据加载 ---------- */
 async function loadIndex() {
@@ -518,7 +533,11 @@ async function viewPlayers(app, params) {
 async function viewPlayer(app, id, params) {
   if (!id) { location.hash = '#/players'; return; }
   const p = await loadPlayer(id);
-  if (params.get('tab')) state.detailTab = params.get('tab');
+  // 以 URL 为唯一事实来源：无 tab 参数一律回到「总览」，
+  // 否则访问过 ?tab=maps 之后再点进别的选手会停留在上一个选手的 tab
+  const TAB_KEYS = ['overview', 'maps', 'matchup', 'opponents', 'matches'];
+  state.detailTab = TAB_KEYS.includes(params.get('tab')) ? params.get('tab') : 'overview';
+  state.detailPage = 0;
 
   app.innerHTML = `
     <div class="card profile">
@@ -549,6 +568,8 @@ async function viewPlayer(app, id, params) {
   $('#tabs').onclick = (e) => {
     const b = e.target.closest('button'); if (!b) return;
     state.detailTab = b.dataset.tab; state.detailPage = 0;
+    // 同步地址栏（replaceState 不触发 hashchange，不会引起整页重渲染）
+    history.replaceState(null, '', `#/player/${p.id}?tab=${state.detailTab}`);
     $$('#tabs button').forEach((x) => x.classList.toggle('on', x === b));
     renderTab(p);
   };
@@ -626,7 +647,8 @@ function tabOverview(p) {
     </div>
 
     <div class="section">
-      <div class="section-head"><h2>月度走势</h2><span class="sub">柱=出场数　线=当月胜率</span></div>
+      <div class="section-head"><h2>月度走势</h2>
+        <span class="sub">柱=出场数　<span style="color:var(--accent)">线=当月胜率</span>　<span style="color:#c47c00">线=月末 ELO</span>（右轴）</span></div>
       <div class="card chart" id="trend"></div>
     </div>`;
 }
@@ -650,15 +672,29 @@ function drawTrend(p) {
     mo++; if (mo > 12) { mo = 1; y++; }
   }
   const map = Object.fromEntries(p.monthly.map((x) => [x.m, x]));
-  const W = 900, H = 190, PL = 34, PR = 34, PT = 14, PB = 26;
+  const W = 900, H = 190, PL = 34, PR = 46, PT = 14, PB = 26;
   const iw = W - PL - PR, ih = H - PT - PB;
   const maxG = Math.max(...months.map((m) => map[m]?.games || 0), 1);
   const bw = Math.max(1.5, iw / months.length - 1.5);
   const x = (i) => PL + (iw / months.length) * (i + 0.5);
   const yWr = (v) => PT + ih - (v / 100) * ih;
 
+  // ELO 折线：走右轴独立刻度（月末 ELO，由当前官方 ELO 向前倒推）
+  const eloVals = months.map((m) => map[m]?.eloEnd).filter((v) => typeof v === 'number');
+  const hasElo = eloVals.length > 1;
+  let eLo = 0, eHi = 1;
+  const eMin = hasElo ? Math.min(...eloVals) : 0;
+  const eMax = hasElo ? Math.max(...eloVals) : 1;
+  if (hasElo) {
+    const pad = Math.max(8, (eMax - eMin) * 0.18);
+    eLo = eMin - pad; eHi = eMax + pad;
+  }
+  const yElo = (v) => PT + ih - ((v - eLo) / (eHi - eLo)) * ih;
+
   let bars = '', dots = '', line = '', area = '';
+  let eloDots = '', eloLine = '';
   const pts = [];
+  const eloPts = [];
   months.forEach((m, i) => {
     const d = map[m];
     const g = d?.games || 0;
@@ -669,6 +705,11 @@ function drawTrend(p) {
       pts.push([cx, cy, d, m]);
       dots += `<circle class="dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.6"></circle>`;
     } else pts.push(null);
+    if (hasElo && typeof d?.eloEnd === 'number') {
+      const cy = yElo(d.eloEnd);
+      eloPts.push([x(i), cy, d, m]);
+      eloDots += `<circle class="dot elo${d.eloChg == null ? ' pending' : ''}" cx="${x(i).toFixed(1)}" cy="${cy.toFixed(1)}" r="2.4"></circle>`;
+    } else eloPts.push(null);
   });
   const segs = [];
   let cur = [];
@@ -679,9 +720,21 @@ function drawTrend(p) {
     const s = segs[0];
     if (s.length > 1) area = `<path class="area" d="M${s[0][0].toFixed(1)} ${(PT + ih).toFixed(1)} ${s.map((p) => 'L' + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ')} L${s.at(-1)[0].toFixed(1)} ${(PT + ih).toFixed(1)} Z"></path>`;
   }
+  if (hasElo) {
+    const es = [];
+    let c2 = [];
+    eloPts.forEach((pt) => { if (pt) c2.push(pt); else { if (c2.length) es.push(c2); c2 = []; } });
+    if (c2.length) es.push(c2);
+    eloLine = es.map((s) => `<path class="line elo" d="${s.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ')}"></path>`).join('');
+  }
   const grid = [0, 25, 50, 75, 100].map((v) =>
     `<line class="axis" x1="${PL}" x2="${W - PR}" y1="${yWr(v).toFixed(1)}" y2="${yWr(v).toFixed(1)}"></line>
      <text class="lbl" x="${PL - 6}" y="${(yWr(v) + 3).toFixed(1)}" text-anchor="end">${v}%</text>`).join('');
+  // 右轴：ELO 刻度（只标 最低 / 中位 / 最高 三个值）
+  const eloAxis = hasElo
+    ? [eMin, (eMin + eMax) / 2, eMax].map((v) =>
+      `<text class="lbl elo" x="${W - PR + 6}" y="${(yElo(v) + 3).toFixed(1)}" text-anchor="start">${Math.round(v)}</text>`).join('')
+    : '';
   const step = Math.max(1, Math.round(months.length / 10));
   const xl = months.map((m, i) => i % step === 0 || i === months.length - 1
     ? `<text class="lbl" x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${m}</text>` : '').join('');
@@ -690,11 +743,17 @@ function drawTrend(p) {
     <defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#3d5afe" stop-opacity=".22"/><stop offset="100%" stop-color="#3d5afe" stop-opacity="0"/>
     </linearGradient></defs>
-    ${grid}${bars}${area}${line}${dots}${xl}
+    ${grid}${eloAxis}${bars}${area}${line}${eloLine}${dots}${eloDots}${xl}
   </svg>`;
   host.querySelectorAll('.dot').forEach((c, i) => {
     const pt = pts.filter(Boolean)[i]; if (!pt) return;
     c.innerHTML = `<title>${pt[3]}：${pt[2].games} 场，胜率 ${pt[2].wr.toFixed(1)}%（${pt[2].wins} 胜 ${pt[2].losses} 负）</title>`;
+  });
+  host.querySelectorAll('.dot.elo').forEach((c, i) => {
+    const pt = eloPts.filter(Boolean)[i]; if (!pt) return;
+    const d = pt[2];
+    const chg = d.eloChg == null ? '当月 ELO 尚未结算' : `当月 ${d.eloChg > 0 ? '+' : ''}${d.eloChg.toFixed(1)}`;
+    c.innerHTML = `<title>${pt[3]}：月末 ELO ${d.eloEnd.toFixed(1)}（${chg}）</title>`;
   });
 }
 
@@ -788,7 +847,7 @@ function tabMatches(p) {
       <input type="search" id="mQ" placeholder="按地图 / 对手筛选（支持中文 / 韩文 / 英文 ID）…" style="min-width:280px">
       <span class="count" id="mCount">共 ${nf(total)} 场</span>
     </div>
-    <div class="table-wrap"><div class="mlist" id="mList"></div></div>
+    <div class="h2h-cols" id="mList"></div>
     <div class="pager" id="mPager"></div>`;
 }
 
@@ -802,24 +861,17 @@ function initMatches(p) {
     const c = Math.min(state.detailPage, pg - 1);
     const sl = list.slice(c * PAGE_SIZE, c * PAGE_SIZE + PAGE_SIZE);
     $('#mCount').textContent = `共 ${nf(list.length)} 场`;
-    $('#mList').innerHTML = sl.map((m) => `
-      <div class="mrow">
-        <span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span>
-        <div>
-          <div class="who">
-            <span class="muted" style="font-size:12px">vs</span>
-            <span style="cursor:pointer" onclick="location.hash='#/player/${m.o}'">${oppPlayer(m.o) ? nameHTML(oppPlayer(m.o)) : `<b>#${m.o}</b>`}</span>
-            ${m.or ? racePill(m.or) : ''}
-            ${mapTag(m.map)}
-          </div>
-          <div class="meta">
-            <span>${esc(fmtDate(m.d))}</span>
-            <span>${esc(evZh(m.e))}</span>
-            ${m.team ? `<span>${esc(m.team)} vs ${esc(m.oteam || '')}</span>` : ''}
-          </div>
-        </div>
-        <span class="elo ${m.elo == null ? 'na' : m.elo > 0 ? 'up' : 'dn'}">${m.elo == null ? '—' : (m.elo > 0 ? '+' : '') + m.elo.toFixed(1)}</span>
-      </div>`).join('') || '<div class="empty">没有匹配的对局</div>';
+    // 与「双方对战 · 交手记录」同一套排版：单行 4 列 + 两栏列优先
+    $('#mList').innerHTML = recColsHTML(sl, REC_COLS, (m) => {
+      const season = !m.map || SEASON_MAPS.has(m.map);
+      const opp = oppPlayer(m.o);
+      return `<tr>
+        <td><span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span></td>
+        <td class="dt">${esc(fmtDate(m.d))}</td>
+        <td><span class="muted" style="margin-right:5px">vs</span><span style="cursor:pointer" onclick="location.hash='#/player/${m.o}'">${opp ? nameHTML(opp) : `<b>#${m.o}</b>`}</span>${m.or ? racePill(m.or) : ''}</td>
+        <td>${mapHTML(mapCn(m.map), m.map)}${season ? '' : '<span class="muted" style="font-size:11px"> 非本赛季</span>'}</td>
+      </tr>`;
+    }, '没有匹配的对局');
     $('#mPager').innerHTML = pg > 1 ? `
       <button ${c === 0 ? 'disabled' : ''} data-p="0">首页</button>
       <button ${c === 0 ? 'disabled' : ''} data-p="${c - 1}">上一页</button>
@@ -986,28 +1038,16 @@ async function renderH2H(aId, bId) {
       <div class="section">
         <div class="section-head"><h2>交手记录</h2><span class="sub">${games.length} 场${games.length > H2H_MAX ? ` · 仅显示最近 ${H2H_MAX} 场` : ''}</span></div>
         <div class="h2h-cols" id="h2hList">
-          ${(() => {
-        const list = games.slice(0, H2H_MAX);
-        // 先填满第一列，再排第二列
-        const half = Math.ceil(list.length / 2);
-        const cols = [list.slice(0, half), list.slice(half)];
-        const row = (m) => {
-          const win = m.w ? A : B, lose = m.w ? B : A;
-          const season = !m.map || SEASON_MAPS.has(m.map);
-          return `<tr>
-                <td><span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span></td>
-                <td class="dt">${esc(fmtDate(m.d))}</td>
-                <td>${nameHTML(win)}<span class="muted" style="margin:0 5px">vs</span><span class="muted">${nameHTML(lose)}</span></td>
-                <td>${mapHTML(mapCn(m.map), m.map)}${season ? '' : '<span class="muted" style="font-size:11px"> 非本赛季</span>'}</td>
-              </tr>`;
-        };
-        return cols.map((c, ci) => `
-            <div class="table-wrap"><table class="h2hTbl">
-              <thead><tr><th></th><th>日期</th><th>对阵</th><th>地图</th></tr></thead>
-              <tbody>${c.map(row).join('')
-            || (ci === 0 ? '<tr><td colspan="4" class="empty">该时间段内没有交手记录</td></tr>' : '')}</tbody>
-            </table></div>`).join('');
-      })()}
+          ${recColsHTML(games.slice(0, H2H_MAX), REC_COLS, (m) => {
+        const win = m.w ? A : B, lose = m.w ? B : A;
+        const season = !m.map || SEASON_MAPS.has(m.map);
+        return `<tr>
+              <td><span class="res ${m.w ? 'w' : 'l'}">${m.w ? '胜' : '负'}</span></td>
+              <td class="dt">${esc(fmtDate(m.d))}</td>
+              <td>${nameHTML(win)}<span class="muted" style="margin:0 5px">vs</span><span class="muted">${nameHTML(lose)}</span></td>
+              <td>${mapHTML(mapCn(m.map), m.map)}${season ? '' : '<span class="muted" style="font-size:11px"> 非本赛季</span>'}</td>
+            </tr>`;
+      }, '该时间段内没有交手记录')}
         </div>
       </div>`}`;
   };

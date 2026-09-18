@@ -42,6 +42,18 @@ console.log('  明细自洽', p.matches.length === p.games ? '✓' : '✗');
 console.log('  胜场自洽', p.matches.filter((m) => m.w).length === p.wins ? '✓' : '✗');
 console.log('  对手带中文名', p.opponents.filter((o) => o.cn).length, '/', p.opponents.length);
 
+// 月度 ELO：逐月净变之和 == eloNet；月末 ELO 相邻差 == 后一月的净变；末月 == 当前官方 ELO
+const sumChg = Math.round(p.monthly.reduce((a, m) => a + (m.eloChg || 0), 0) * 10) / 10;
+console.log('  月度 ELO 净变之和', sumChg, '= eloNet', p.eloNet, sumChg === p.eloNet ? '✓' : '✗');
+let eloOk = p.monthly.at(-1).eloEnd === p.elo;
+for (let i = 1; i < p.monthly.length; i++) {
+  const d = Math.round((p.monthly[i].eloEnd - p.monthly[i - 1].eloEnd) * 10) / 10;
+  if (d !== (p.monthly[i].eloChg || 0)) eloOk = false;
+}
+console.log('  月末 ELO 倒推自洽（末月 = 官方 ELO，相邻差 = 当月净变）', eloOk ? '✓' : '✗');
+console.log('  有 ELO 的月份', p.monthly.filter((m) => m.eloChg != null).length, '/', p.monthly.length,
+  '（未结算的月份 eloChg 为 null，折线按 0 处理）');
+
 let g = 0, w = 0;
 for (const e of [43, 33, 64]) {
   const arr = JSON.parse(await readFile(`data/raw/event-${e}.json`, 'utf8'));

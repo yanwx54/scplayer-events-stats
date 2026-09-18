@@ -18,6 +18,9 @@ const dispOf = (p) => p.cn || p.name;              // 展示名（中文优先�
 const byId = new Map(idxJson.players.map((p) => [p.id, p]));
 const topPlayer = [...idxJson.players].sort((a, b) => b.games - a.games)[0];
 const player34 = JSON.parse(fs.readFileSync(path.join(DATA, 'players', '34.json'), 'utf8'));
+/** 对局记录的分页大小从 app.js 读取，避免两处写死后不一致 */
+const PAGE_SIZE = Number(/const PAGE_SIZE = (\d+)/.exec(
+  fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8'))[1]);
 const h2hGames = player34.matches.filter((m) => m.o === 12);   // 34 vs 12
 const h2hAW = h2hGames.filter((m) => m.w).length;
 const dayBefore = (d) => new Date(Date.parse(d) - 864e5).toISOString().slice(0, 10);
@@ -200,7 +203,7 @@ const pages = [
   console.log(`    首行: ${recTxt.replace(/\n/g, ' | ')}`);
   check('交手记录每行只占一行文本高度', recTxt.split('\n').length <= 4, `${recTxt.split('\n').length} 行文本`);
   // 列优先：第一栏的日期都晚于第二栏（第一栏装的是最近的比赛）
-  const colDates = await page.$$eval('#h2hList .h2hTbl', (tbls) => tbls.map((t) =>
+  const colDates = await page.$$eval('#h2hList .recTbl', (tbls) => tbls.map((t) =>
     [...t.querySelectorAll('tbody tr')].map((tr) => tr.children[1].textContent.trim())));
   check('两栏为列优先填充（第一栏填满后才排第二栏）',
     colDates.length === 2 && colDates[0].length >= colDates[1].length && colDates[0].at(-1) > colDates[1][0],
@@ -309,6 +312,31 @@ const pages = [
   await page.goto(BASE + '/#/player/12', { waitUntil: 'networkidle' });
   await page.waitForTimeout(500);
   check('详情页标题显示中文名（永镇）', (await page.locator('.profile h1').innerText()).includes('永镇'));
+
+  // 月度走势：柱=出场数、线=当月胜率、线=月末 ELO（右轴）
+  const p12 = JSON.parse(fs.readFileSync(path.join(DATA, 'players', '12.json'), 'utf8'));
+  const monthsWithElo = p12.monthly.filter((m) => typeof m.eloEnd === 'number').length;
+  const wrDots = await page.locator('#trend circle.dot:not(.elo)').count();
+  const eloDots = await page.locator('#trend .dot.elo').count();
+  check('月度走势含胜率折线点', wrDots === p12.monthly.length, `${wrDots} / ${p12.monthly.length}`);
+  check('月度走势含 ELO 折线点（右轴）', eloDots === monthsWithElo, `${eloDots} / ${monthsWithElo}`);
+  check('月度走势含 ELO 折线路径', (await page.locator('#trend path.line.elo').count()) >= 1);
+  const eloAxis = await page.$$eval('#trend text.lbl.elo', (ts) => ts.map((t) => Number(t.textContent)));
+  check('ELO 右轴 3 个刻度且递增', eloAxis.length === 3 && eloAxis[0] < eloAxis[1] && eloAxis[1] < eloAxis[2],
+    eloAxis.join(' < '));
+  const eloYs = await page.$$eval('#trend .dot.elo', (cs) => cs.map((c) => Number(c.getAttribute('cy'))));
+  check('ELO 折线随月份起伏（非直线）', new Set(eloYs.map((v) => v.toFixed(1))).size > 1,
+    `${new Set(eloYs.map((v) => v.toFixed(1))).size} 个不同高度`);
+  // 最高 ELO 的月份，其点应落在最上方（y 最小）—— 验证右轴刻度映射没接反
+  let maxIdx = 0;
+  p12.monthly.forEach((m, i) => { if (m.eloEnd > p12.monthly[maxIdx].eloEnd) maxIdx = i; });
+  check('ELO 最高月的点位于最上方（轴映射正确）',
+    Math.abs(eloYs[maxIdx] - Math.min(...eloYs)) < 0.01,
+    `${p12.monthly[maxIdx].m} ELO ${p12.monthly[maxIdx].eloEnd} → cy ${eloYs[maxIdx].toFixed(1)}（最小 ${Math.min(...eloYs).toFixed(1)}）`);
+  const eloTip = await page.locator('#trend .dot.elo').first().evaluate((el) => el.innerHTML);
+  check('ELO 点带月末 ELO 提示', /月末 ELO \d/.test(eloTip), eloTip.slice(0, 70));
+  await page.locator('#trend').screenshot({ path: path.join(OUT, 'player-trend-elo.png') }).catch(() => {});
+
   for (const t of ['maps', 'matchup', 'opponents', 'matches']) {
     await page.locator(`#tabs button[data-tab="${t}"]`).click();
     await page.waitForTimeout(350);
@@ -333,6 +361,30 @@ const pages = [
   await page.locator('#oppQ').fill('迷你');
   await page.waitForTimeout(300);
   check('对手 tab 中文名搜索生效', (await page.locator('#oppTable tbody tr').count()) === oppHit);
+
+  // 对局记录：与「双方对战 · 交手记录」同一套排版（单行 4 列 + 两栏列优先）
+  await page.locator('#tabs button[data-tab="matches"]').click();
+  await page.waitForTimeout(400);
+  check('对局记录分为两栏', (await page.locator('#mList .table-wrap').count()) === 2);
+  const mCells = await page.$$eval('#mList .table-wrap:first-child tbody tr:first-child td', (tds) => tds.length);
+  check('对局记录每行 4 列（结果/日期/对阵/地图）', mCells === 4, `${mCells} 列`);
+  const mHeads = await page.$$eval('#mList .table-wrap:first-child thead th', (ths) =>
+    ths.map((t) => t.textContent.trim()).filter(Boolean));
+  check('对局记录表头与交手记录一致（日期/对阵/地图）', mHeads.join('/') === '日期/对阵/地图', mHeads.join('/'));
+  check('对局记录已无两行布局（.mrow）', (await page.locator('#mList .mrow').count()) === 0);
+  const mColRows = await page.$$eval('#mList .recTbl', (tbls) => tbls.map((t) => t.querySelectorAll('tbody tr').length));
+  check(`对局记录一页 ${PAGE_SIZE} 行、两栏均衡`,
+    mColRows[0] + mColRows[1] === Math.min(PAGE_SIZE, p12.matches.length)
+    && Math.abs(mColRows[0] - mColRows[1]) <= 1,
+    `${mColRows[0]} + ${mColRows[1]} 行`);
+  const mOverflow = await page.$$eval('#mList .table-wrap', (els) => els.map((e) => e.scrollWidth - e.clientWidth));
+  check('对局记录两栏均未横向溢出', mOverflow.every((d) => d <= 0), mOverflow.join(' / '));
+  const mFirst = await page.locator('#mList .table-wrap:first-child tbody tr:first-child').innerText();
+  console.log(`    首行: ${mFirst.replace(/\n/g, ' | ')}`);
+  await page.evaluate(() => { document.querySelector('.topbar').style.display = 'none'; });
+  await page.waitForTimeout(200);
+  await page.locator('#mList').screenshot({ path: path.join(OUT, 'player-matches.png') }).catch(() => {});
+  await page.evaluate(() => { document.querySelector('.topbar').style.display = ''; });
 
   console.log('\n--- 控制台错误 ---');
   console.log(errors.length ? errors.slice(0, 10).join('\n') : '(无)');
