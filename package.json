@@ -8,6 +8,7 @@
     "start": "node server.mjs",
     "sync": "node scripts/sync.mjs",
     "sync:full": "node scripts/sync.mjs --full",
+    "backup": "node scripts/git-backup.mjs",
     "fetch": "node scripts/fetch-matches.mjs && node scripts/fetch-players.mjs && node scripts/fetch-avatars.mjs",
     "build": "node scripts/build-db.mjs",
     "rebuild": "node scripts/build-db.mjs",

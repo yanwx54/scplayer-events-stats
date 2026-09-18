@@ -68,6 +68,7 @@ node server.mjs            # → http://127.0.0.1:5178
 npm run sync               # 增量抓取新对局 + 补选手/头像 + 重建数据库
 npm run sync:full          # 全量重抓（数据异常时使用）
 npm run verify             # 数据一致性校验
+npm run backup             # 提交并推送到 GitHub
 
 # 全量重建（需要能访问 eloboard.com）
 npm run fetch              # 抓比赛 + 选手 + 头像
@@ -76,9 +77,13 @@ npm run build              # 生成 public/data/
 
 `public/` 是纯静态目录，可直接部署到任意静态托管。
 
-## 每日自动同步
+## 每日自动同步 + 备份
 
-已配置每日 **10:00** 自动运行（WorkBuddy 自动化「SC三大赛事数据每日同步」），执行 `scripts/sync.mjs` + `scripts/verify.mjs` 并输出中文简报。
+已配置每日 **10:00** 自动运行（WorkBuddy 自动化「SC三大赛事数据每日同步」）：
+
+```
+scripts/sync.mjs  →  scripts/verify.mjs  →  scripts/git-backup.mjs  →  中文简报
+```
 
 ### 增量同步策略（`scripts/sync.mjs`）
 
@@ -90,6 +95,20 @@ npm run build              # 生成 public/data/
 6. 结束时输出 `SYNC_OK`；若某赛事本地条数少于官方 `x-total-count`，会提示改用 `--full`。
 
 实测：无新数据时约 2.5~5 秒完成（每赛事仅 2 页）。
+
+### GitHub 备份（`scripts/git-backup.mjs`）
+
+- 无变更时跳过（输出 `GIT_BACKUP_SKIP`），不产生空提交
+- 推送失败自动退避重试 4 次（SSH 到 github.com 会间歇性 Connection reset）
+- 推送后校准本地追踪引用；末尾输出 `GIT_BACKUP_OK`
+
+仓库：<https://github.com/yanwx54/scplayer-events-stats>
+
+### 版本控制约定
+
+`.gitignore` 排除了 `data/raw/`（21MB 抓取缓存，每日整体重写，入库会让仓库快速膨胀；
+缺失时 `sync.mjs` 会自动全量重抓）、`shots/`（自检截图）与 `node_modules/`。
+`public/data/` 与 `public/avatars/` **入库**，克隆后即可直接运行站点。
 
 ## 数据来源
 
