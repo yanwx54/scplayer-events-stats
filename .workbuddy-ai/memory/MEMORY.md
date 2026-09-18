@@ -73,7 +73,7 @@ id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：
 `sync.mjs` → `verify.mjs` → `verify-range.mjs` → `git-backup.mjs` → **`push-server.mjs`** → 中文简报
 
 ## 服务器部署（用户自有服务器）
-- 目标地址 **`http://199.180.116.188:5001/`**（用户 2026-09-18 要求，需可在外网随时访问）
+- 目标地址 **`http://199.180.116.188:5001/`** —— **已上线运行**（2026-09-18 部署完成，用户要求可在外网随时访问）
 - 服务器：**Ubuntu 18.04（glibc 2.27）** → 官方二进制最高只能用 **Node 16**，
   服务器侧代码禁止使用 `import.meta.dirname` / `structuredClone` / `AbortSignal.timeout` 等新 API
 - 登录：`ssh -p 27168 root@199.180.116.188`（**端口是 27168**；22 等端口无监听）
@@ -90,14 +90,22 @@ id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：
   - `scripts/push-server.mjs`：本地比对 sha1 后**只推变化文件**（`--full` 全量 / `--check` 只比对）
   - 地址与令牌放 **`local.config.json`（已 gitignore，不入库）**
 - 实测：首次全量 326 文件 / 5.5MB / 16.5s；无变化时幂等跳过；改 1 个文件 0.2s
+- **线上验收方式：`BASE=http://199.180.116.188:5001 node scripts/shoot.cjs`**（71 项断言；2026-09-18 全过、0 控制台错误）
+- 服务器实测跑的是 **Node v16.20.2**，与「服务器侧代码必须兼容 Node 16」的约束一致（改动 server.mjs 时别引入新 API）
+- 排障需 SSH：`pm2 logs scplayer-events-stats` / `pm2 restart scplayer-events-stats`
 - 本机 **npm 被安全策略拦死**（会调黑名单里的 `reg.exe`），装不了 `ssh2`；
-  若将来要用密码登录服务器，改用 Python `paramiko`（PyPI 可通）
+  若将来要用密码登录服务器，改用 Python `paramiko`（已装在
+  `C:\Users\yanwx\.workbuddy-ai\binaries\python\envs\default`，配套 `scripts/remote-deploy.py`）
 
-## 线上发布（沙箱预览链接）
+## 线上发布
+现在有**两个线上目标**，内容都是 `public/` 目录：
+1. **自有服务器 `http://199.180.116.188:5001/`**（主力目标，见上一节；`npm run deploy` 增量推送）
+2. 沙箱预览链接（见下）
+
 - 发布对象是 **`public/` 目录**（纯静态），不是项目根
 - 分享链接：`https://93a5c2c68d004874bfff959e25daade5.sg.agentos-app.run`（sandboxId 同 ID，重发链接不变）
 - **用户的长期授权（2026-09-18 明确要求）**：「以后每次做完都同步更新到线上分享链接，让我看效果」
   → 完成改动 + 本地自检通过后，**直接重新发布，不必再逐次问**；发布后给出链接与线上验证结果
 - 每日 10:00 自动同步后线上**不会自动更新**，需要重新发布（链接不变，内容被覆盖）
-- **发布后的验收方式**：`BASE=<线上地址> node scripts/shoot.cjs` —— 同一套 47 项断言直接打线上，
+- **发布后的验收方式**：`BASE=<线上地址> node scripts/shoot.cjs` —— 同一套 **71 项**断言直接打线上，
   比只看 HTTP 200 靠谱得多
