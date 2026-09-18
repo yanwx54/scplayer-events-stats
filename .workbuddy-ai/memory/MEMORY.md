@@ -37,3 +37,9 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 ## 每日自动化
 id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：
 `sync.mjs` → `verify.mjs` → `verify-range.mjs` → `git-backup.mjs` → 中文简报
+
+## 线上发布
+- 发布对象是 **`public/` 目录**（纯静态），不是项目根
+- 分享链接：`https://93a5c2c68d004874bfff959e25daade5.sg.agentos-app.run`
+- 每日同步后线上**不会自动更新**，需重新发布该目录（链接不变，内容被覆盖）
+- 重新发布属于对外发布动作，**必须先问过用户**再执行
