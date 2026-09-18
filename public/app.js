@@ -25,6 +25,7 @@ const state = {
   daily: null,
   playerCache: new Map(),
   playerSort: { key: 'games', dir: -1 },
+  oppSort: { key: 'games', dir: -1 },
   playerFilter: { event: 0, race: '', q: '', min: 0, from: null, to: null },
   detailTab: 'overview',
   detailPage: 0,
@@ -394,6 +395,46 @@ function wrCell(wr) {
   return `<span class="wrbar"><span class="bar"><i class="${cls}" style="width:${Math.min(100, wr)}%"></i></span>${wr.toFixed(1)}%</span>`;
 }
 
+/* ---------- 表头点击排序 ---------- */
+/**
+ * 生成可点击排序的表头。
+ * cols = [[key, 标签, 是否数值列, 首次点击的默认方向(1 升序 / -1 降序)], …]
+ * sort = { key, dir } —— 放在 state 里，重绘后保持。
+ */
+function sortableTH(cols, sort) {
+  return cols.map(([k, t, num, def]) => {
+    const on = sort.key === k;
+    const dir = on ? sort.dir : (def ?? -1);
+    return `<th class="sortable${on ? ' sorted' : ''}${num ? ' num' : ''}" data-k="${k}" data-def="${dir}"`
+      + ` title="点击排序">${t} <span class="arrow">${on ? (dir === 1 ? '▲' : '▼') : '↕'}</span></th>`;
+  }).join('');
+}
+
+/** 绑定表头点击排序：同一列再次点击反向，换列则用该列的默认方向 */
+function bindSort(sel, sort, redraw) {
+  $$(`${sel} th.sortable`).forEach((th) => {
+    th.onclick = () => {
+      const k = th.dataset.k;
+      if (sort.key === k) sort.dir *= -1;
+      else { sort.key = k; sort.dir = Number(th.dataset.def) || -1; }
+      redraw();
+    };
+  });
+}
+
+/**
+ * 只刷新表头的排序标记（已排序高亮 + ▲▼ 箭头）。
+ * 适用于「只重绘 tbody」的表格 —— 整体重建 thead 会丢掉 bindSort 绑的点击事件。
+ */
+function updateSortMarks(sel, sort) {
+  $$(`${sel} th.sortable`).forEach((th) => {
+    const on = sort.key === th.dataset.k;
+    th.classList.toggle('sorted', on);
+    const a = th.querySelector('.arrow');
+    if (a) a.textContent = on ? (sort.dir === 1 ? '▲' : '▼') : '↕';
+  });
+}
+
 /* ============================================================
    选手排行
    ============================================================ */
@@ -483,15 +524,14 @@ async function viewPlayers(app, params) {
     $('#count').textContent = `${rows.length} 名选手`;
 
     const cols = [
-      ['name', '选手', 0], ['race', '种族', 0],
-      ['games', f.event ? evZh(f.event) + ' 场次' : '出场', 1],
-      ['wins', '胜 / 负', 1],
-      ['wr', '胜率', 1], ['eloNet', 'ELO 净变', 1], ['elo', '官方 ELO', 1],
+      ['name', '选手', 0, 1], ['race', '种族', 0, 1],
+      ['games', f.event ? evZh(f.event) + ' 场次' : '出场', 1, -1],
+      ['wins', '胜 / 负', 1, -1],
+      ['wr', '胜率', 1, -1], ['eloNet', 'ELO 净变', 1, -1], ['elo', '官方 ELO', 1, -1],
     ];
     $('#plist').innerHTML = `
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th>${cols.map(([k, t, num]) =>
-      `<th class="sortable ${state.playerSort.key === k ? 'sorted' : ''} ${num ? 'num' : ''}" data-k="${k}">${t} <span class="arrow">${state.playerSort.key === k ? (state.playerSort.dir === 1 ? '▲' : '▼') : '↕'}</span></th>`).join('')}
+        <thead><tr><th>#</th>${sortableTH(cols, state.playerSort)}
         <th class="num" title="基于全部数据统计，不受上方时间段与赛事筛选影响">近 10 场</th></tr></thead>
         <tbody>${rows.slice(0, 400).map((x, i) => { const { p, v } = x; return `
           <tr class="clickable" onclick="location.hash='#/player/${p.id}'">
@@ -510,14 +550,7 @@ async function viewPlayers(app, params) {
       ${rows.length > 400 ? `<div class="hint" style="padding:10px">仅显示前 400 名，请使用筛选缩小范围。</div>` : ''}
       ${rangeActive ? `<div class="hint" style="padding:0 10px 10px">已按时间段 ${esc(f.from)} ~ ${esc(f.to)} 统计（覆盖 ${hi - lo + 1} 个比赛日）</div>` : ''}`;
 
-    $$('#plist th.sortable').forEach((th) => {
-      th.onclick = () => {
-        const k = th.dataset.k;
-        if (state.playerSort.key === k) state.playerSort.dir *= -1;
-        else state.playerSort = { key: k, dir: k === 'name' || k === 'race' ? 1 : -1 };
-        renderPlayerTable();
-      };
-    });
+    bindSort('#plist', state.playerSort, renderPlayerTable);
   }
 
   bindRangeBar('segRange', FIRST, LAST, () => ({ from: f.from, to: f.to }), (from, to) => {
@@ -800,20 +833,39 @@ function tabMatchup(p) {
     </div>`;
 }
 
+/** 「对手」表可排序的列：名称 / 种族默认升序，数值列默认降序（先看最多的） */
+const OPP_COLS = [
+  ['name', '对手', 0, 1], ['race', '种族', 0, 1],
+  ['games', '交手', 1, -1], ['wins', '胜', 1, -1], ['losses', '负', 1, -1],
+  ['wr', '胜率', 1, -1], ['last', '最近交手', 1, -1],
+];
+
 function tabOpponents(p) {
   return `
     <div class="filters">
       <input type="search" id="oppQ" placeholder="筛选对手（中文 / 韩文 / 英文 ID）…" style="min-width:240px">
-      <span class="count">共 ${p.opponents.length} 位交手过的对手</span>
+      <span class="count">共 ${p.opponents.length} 位交手过的对手 · 点击表头排序</span>
     </div>
     <div class="table-wrap"><table id="oppTable">
-      <thead><tr><th>#</th><th>对手</th><th>种族</th><th class="num">交手</th><th class="num">胜</th><th class="num">负</th><th class="num">胜率</th><th class="num">最近交手</th></tr></thead>
+      <thead><tr><th>#</th>${sortableTH(OPP_COLS, state.oppSort)}</tr></thead>
       <tbody></tbody></table></div>`;
 }
 
 function initOpponents(p) {
+  // 每个对手的最近交手日期（不依赖 p.matches 的顺序，直接取最大值）
+  const lastOf = {};
+  for (const m of p.matches) if (!lastOf[m.o] || m.d > lastOf[m.o]) lastOf[m.o] = m.d;
+
   const draw = (q) => {
-    const list = p.opponents.filter((o) => matchPlayer(o, q));
+    const { key, dir } = state.oppSort;
+    const val = (o) => (key === 'name' ? dispName(o)
+      : key === 'race' ? (o.race || '')
+        : key === 'last' ? (lastOf[o.id] || '') : (o[key] ?? -1));
+    const list = p.opponents.filter((o) => matchPlayer(o, q)).sort((a, b) => {
+      const x = val(a), y = val(b);
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'ko');
+      return c !== 0 ? c * dir : b.games - a.games;   // 同值时按交手场次兜底
+    });
     $('#oppTable tbody').innerHTML = list.map((o, i) => `
       <tr class="clickable" onclick="location.hash='#/h2h?a=${p.id}&b=${o.id}'" title="点击查看双方对战">
         <td><span class="rank">${i + 1}</span></td>
@@ -823,16 +875,14 @@ function initOpponents(p) {
         <td class="num" style="color:var(--win)">${nf(o.wins)}</td>
         <td class="num" style="color:var(--loss)">${nf(o.losses)}</td>
         <td class="num">${wrCell(o.wr)}</td>
-        <td class="num muted">${esc(lastVs(p, o.id))}</td></tr>`).join('')
+        <td class="num muted">${esc(lastOf[o.id] || '—')}</td></tr>`).join('')
       || '<tr><td colspan="8" class="empty">没有匹配的对手</td></tr>';
+    updateSortMarks('#oppTable', state.oppSort);   // thead 不重建，排序标记要手动刷新
   };
-  draw('');
+  const redraw = () => draw($('#oppQ').value);
+  redraw();
   $('#oppQ').oninput = (e) => draw(e.target.value);
-}
-
-function lastVs(p, oid) {
-  const m = p.matches.find((x) => x.o === oid);
-  return m?.d || '—';
+  bindSort('#oppTable', state.oppSort, redraw);
 }
 
 const PAGE_SIZE = 40;

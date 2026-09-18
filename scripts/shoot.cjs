@@ -172,6 +172,22 @@ const pages = [
     back[0].name === full5[0].name && back[0].games === full5[0].games,
     `初始 [${full5[0].name} ${full5[0].games}] → 恢复后 [${back[0].name} ${back[0].games}]`);
 
+  // 排行表表头排序（与「对手」表共用同一套 helper，这里做回归）
+  const plistCol = (i) => page.$$eval('#plist tbody tr', (trs, idx) =>
+    trs.slice(0, 8).map((tr) => tr.children[idx].innerText.trim()), i);
+  await page.locator('#plist th[data-k="wr"]').click();
+  await page.waitForTimeout(350);
+  const plWr = (await plistCol(5)).map((s) => parseFloat(s));
+  check('排行点「胜率」→ 降序', plWr.every((v, i) => i === 0 || plWr[i - 1] >= v), plWr.slice(0, 5).join(' ≥ '));
+  await page.locator('#plist th[data-k="wr"]').click();
+  await page.waitForTimeout(350);
+  const plWrAsc = (await plistCol(5)).map((s) => parseFloat(s));
+  check('排行再点「胜率」→ 升序', plWrAsc.every((v, i) => i === 0 || plWrAsc[i - 1] <= v), plWrAsc.slice(0, 5).join(' ≤ '));
+  await page.locator('#plist th[data-k="games"]').click();
+  await page.waitForTimeout(350);
+  check('排行还原为按场次降序',
+    (await plistCol(3)).map(Number).every((v, i, a) => i === 0 || a[i - 1] >= v));
+
   /* ---------- 双方对战 ---------- */
   console.log('\n=== 双方对战 ===');
   await page.goto(BASE + '/#/h2h?a=34&b=12', { waitUntil: 'networkidle' });
@@ -361,6 +377,53 @@ const pages = [
   await page.locator('#oppQ').fill('迷你');
   await page.waitForTimeout(300);
   check('对手 tab 中文名搜索生效', (await page.locator('#oppTable tbody tr').count()) === oppHit);
+  await page.locator('#oppQ').fill('');
+  await page.waitForTimeout(300);
+
+  // 对手表点击表头排序
+  const oppCol = (i) => page.$$eval('#oppTable tbody tr', (trs, idx) =>
+    trs.map((tr) => tr.children[idx].innerText.trim()), i);
+  const isSorted = (arr, dir) => arr.every((v, i) => i === 0 || (dir > 0 ? arr[i - 1] <= v : arr[i - 1] >= v));
+  check('对手表 7 个表头均可排序', (await page.locator('#oppTable th.sortable').count()) === 7);
+  const g0 = (await oppCol(3)).map(Number);
+  check('对手表默认按交手场次降序', isSorted(g0, -1), g0.slice(0, 5).join(' ≥ '));
+  await page.locator('#oppTable th[data-k="wr"]').click();
+  await page.waitForTimeout(250);
+  const wrDesc = (await oppCol(6)).map((s) => parseFloat(s));
+  check('点「胜率」→ 按胜率降序', isSorted(wrDesc, -1), wrDesc.slice(0, 5).join(' ≥ '));
+  check('「胜率」表头标记为已排序（▼）',
+    (await page.locator('#oppTable th[data-k="wr"].sorted .arrow').innerText()).trim() === '▼');
+  await page.locator('#oppTable th[data-k="wr"]').click();
+  await page.waitForTimeout(250);
+  const wrAsc = (await oppCol(6)).map((s) => parseFloat(s));
+  check('再点一次「胜率」→ 升序', isSorted(wrAsc, 1), wrAsc.slice(0, 5).join(' ≤ '));
+  check('「胜率」表头标记切换为 ▲',
+    (await page.locator('#oppTable th[data-k="wr"].sorted .arrow').innerText()).trim() === '▲');
+  await page.locator('#oppTable th[data-k="last"]').click();
+  await page.waitForTimeout(250);
+  const lastDesc = await oppCol(7);
+  check('切到「最近交手」→ 按日期降序', isSorted(lastDesc, -1), lastDesc.slice(0, 3).join(' ≥ '));
+  check('换列后原列不再标记为已排序',
+    (await page.locator('#oppTable th.sorted').count()) === 1);
+  // 排序与搜索可叠加
+  await page.locator('#oppQ').fill('Mini');
+  await page.waitForTimeout(300);
+  check('排序与搜索可叠加', (await page.locator('#oppTable tbody tr').count()) === 1);
+  await page.locator('#oppQ').fill('');
+  await page.waitForTimeout(300);
+  // 还原默认排序，避免影响后续断言
+  await page.locator('#oppTable th[data-k="games"]').click();
+  await page.waitForTimeout(250);
+  check('还原为交手降序', isSorted((await oppCol(3)).map(Number), -1));
+  // 截图：按胜率降序的状态更直观
+  await page.locator('#oppTable th[data-k="wr"]').click();
+  await page.waitForTimeout(250);
+  await page.evaluate(() => { document.querySelector('.topbar').style.display = 'none'; });
+  await page.waitForTimeout(200);
+  await page.locator('#oppTable').screenshot({ path: path.join(OUT, 'player-opponents-sorted.png') }).catch(() => {});
+  await page.evaluate(() => { document.querySelector('.topbar').style.display = ''; });
+  await page.locator('#oppTable th[data-k="games"]').click();
+  await page.waitForTimeout(250);
 
   // 对局记录：与「双方对战 · 交手记录」同一套排版（单行 4 列 + 两栏列优先）
   await page.locator('#tabs button[data-tab="matches"]').click();
