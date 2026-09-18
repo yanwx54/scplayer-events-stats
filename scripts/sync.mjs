@@ -58,7 +58,9 @@ async function readJson(p, fallback) {
 /* ---------- 单赛事增量同步 ---------- */
 async function syncEvent(eventId) {
   const file = path.join(RAW, `event-${eventId}.json`);
-  const existing = FULL ? [] : await readJson(file, []);
+  let rawText = '';
+  try { rawText = await readFile(file, 'utf8'); } catch { /* 首次运行，无本地缓存 */ }
+  const existing = FULL ? [] : (() => { try { return JSON.parse(rawText); } catch { return []; } })();
   const known = new Set(existing.map((m) => m.id));
 
   const fresh = [];
@@ -86,9 +88,15 @@ async function syncEvent(eventId) {
   const added = merged.reduce((n, m) => n + (known.has(m.id) ? 0 : 1), 0);
   const removed = existing.length + added - merged.length;
 
-  await mkdir(RAW, { recursive: true });
-  await writeFile(file, JSON.stringify(merged));
-  return { eventId, before: existing.length, after: merged.length, added, removed, officialTotal: total, pages: pages + 1 };
+  // 内容比对：即使条数不变，官方修正某条记录也应算作变更
+  const nextText = JSON.stringify(merged);
+  const changed = nextText !== rawText;
+
+  if (changed) {
+    await mkdir(RAW, { recursive: true });
+    await writeFile(file, nextText);
+  }
+  return { eventId, before: existing.length, after: merged.length, added, removed, changed, officialTotal: total, pages: pages + 1 };
 }
 
 /* ---------- 补抓选手元数据 ---------- */
@@ -148,7 +156,8 @@ async function main() {
   for (const e of EVENTS) {
     const r = await syncEvent(e);
     results.push(r);
-    console.log(`  赛事 ${e}: ${r.before} → ${r.after}（新增 ${r.added}，纠正/移除 ${r.removed}）· 官方总数 ${r.officialTotal} · ${r.pages} 页`);
+    const tag = r.changed ? (r.added ? `新增 ${r.added}` : '记录有修正') : '无变化';
+    console.log(`  赛事 ${e}: ${r.before} → ${r.after}（${tag}，纠正/移除 ${r.removed}）· 官方总数 ${r.officialTotal} · ${r.pages} 页`);
   }
 
   const allMatches = [];
@@ -160,9 +169,18 @@ async function main() {
   const av = await syncAvatars();
   console.log(`  头像：${av.length ? `新增 ${av.length} 张（${av.join('、')}）` : '无新增'}`);
 
-  if (!NO_BUILD) {
+  // 数据无任何变化时跳过重建 —— 避免 index.json 里的 builtAt 时间戳
+  // 每天制造一个无意义的提交（否则每日自动化会天天产生空提交噪声）
+  const dataChanged = results.some((r) => r.changed) || pl.added.length > 0 || av.length > 0;
+  let rebuilt = false;
+  if (NO_BUILD) {
+    console.log('  跳过重建（--no-build）');
+  } else if (!dataChanged) {
+    console.log('  数据无变化，跳过数据库重建');
+  } else {
     console.log('  重建数据库…');
     await run(process.execPath, [path.join(ROOT, 'scripts', 'build-db.mjs')]);
+    rebuilt = true;
   }
 
   const totalAdded = results.reduce((n, r) => n + r.added, 0);
@@ -172,6 +190,7 @@ async function main() {
 
   console.log('─'.repeat(60));
   console.log(`完成：对局 ${totalMatches}（新增 ${totalAdded}，纠正 ${totalRemoved}）· 选手 ${pl.total} · 耗时 ${secs}s · ${today()}`);
+  console.log(`数据库：${rebuilt ? '已重建' : '未变更'} · 数据${dataChanged ? '有更新' : '无更新'}`);
   for (const r of results) {
     const diff = r.officialTotal - r.after;
     if (diff > 0) console.log(`  ⚠ 赛事 ${r.eventId}：本地 ${r.after} 少于官方 ${r.officialTotal}（差 ${diff}），可能需要 --full`);
