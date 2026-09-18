@@ -44,6 +44,15 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 - 写脚本文件用 Write 工具，不要用 Bash heredoc（`${...}` 会被 shell 展开报 Bad substitution）
 - 手工提交推送统一走 `node scripts/git-backup.mjs --msg "feat: ..."`（自动 add -A + 提交 + 重试推送 + 校准追踪引用）
 
+## 表格与排序
+- 表头排序统一走三个 helper（`app.js` 里 `wrCell` 之后）：`sortableTH(cols, sort)` /
+  `bindSort(sel, sort, redraw)` / `updateSortMarks(sel, sort)`
+  - `cols = [[key, 标签, 是否数值列, 首次点击的默认方向(1 升 / -1 降)], …]`
+  - 排序状态放 `state`（`playerSort` / `oppSort`），重绘后保持
+- **只重绘 `tbody` 的表格，必须手动调 `updateSortMarks()`** —— 表头不重建，
+  `.sorted` 高亮与 ▲▼ 箭头不会自己更新（排行榜整体重建 innerHTML 所以不需要）
+- 单行记录两栏表格统一走 `recColsHTML(list, REC_COLS, rowFn, emptyText)`，列定义 `REC_COLS`
+
 ## 测试约定
 - `shoot.cjs` 的期望值必须**从构建产物（index.json 等）推导**，不要写死数字 —— 数据每天都在涨
   （`PAGE_SIZE` 这类代码常量则从 `app.js` 源码正则读取）
