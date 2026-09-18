@@ -119,7 +119,7 @@ echo "[6/6] 启动服务 ..."
 pm2 delete "$PM2_NAME" >/dev/null 2>&1 || true
 cd "$APP_DIR"
 PORT="$APP_PORT" HOST=0.0.0.0 SITE_ROOT="$APP_DIR/site" TOKEN_FILE="$TOKEN_FILE" \
-  pm2 start deploy/server.mjs --name "$PM2_NAME" --cwd "$APP_DIR" >/dev/null
+  pm2 start "$APP_DIR/deploy/server.mjs" --name "$PM2_NAME" --cwd "$APP_DIR" >/dev/null
 pm2 save >/dev/null 2>&1 || true
 if command -v systemctl >/dev/null 2>&1; then
   pm2 startup 2>/dev/null | grep "sudo" | bash 2>/dev/null || true
@@ -138,6 +138,18 @@ else
 fi
 
 sleep 2
+echo ""
+echo "  自检："
+if command -v curl >/dev/null 2>&1; then
+  health="$(curl -s --max-time 8 "http://127.0.0.1:${APP_PORT}/api/health" 2>/dev/null || true)"
+  if [ -n "$health" ]; then
+    echo "    ✓ 服务已响应：$health"
+  else
+    echo "    ✗ 服务无响应，请查看日志：pm2 logs $PM2_NAME --lines 50"
+  fi
+else
+  echo "    (服务器无 curl，跳过自检) 可用 pm2 logs $PM2_NAME 查看日志"
+fi
 echo ""
 echo "=========================================="
 echo "  ✓ 部署完成"

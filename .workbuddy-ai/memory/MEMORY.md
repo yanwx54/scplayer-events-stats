@@ -70,9 +70,30 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 
 ## 每日自动化
 id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：
-`sync.mjs` → `verify.mjs` → `verify-range.mjs` → `git-backup.mjs` → 中文简报
+`sync.mjs` → `verify.mjs` → `verify-range.mjs` → `git-backup.mjs` → **`push-server.mjs`** → 中文简报
 
-## 线上发布
+## 服务器部署（用户自有服务器）
+- 目标地址 **`http://199.180.116.188:5001/`**（用户 2026-09-18 要求，需可在外网随时访问）
+- 服务器：**Ubuntu 18.04（glibc 2.27）** → 官方二进制最高只能用 **Node 16**，
+  服务器侧代码禁止使用 `import.meta.dirname` / `structuredClone` / `AbortSignal.timeout` 等新 API
+- 登录：`ssh -p 27168 root@199.180.116.188`（**端口是 27168**；22 等端口无监听）
+  - 本机 `~/.ssh/id_ed25519` 是 GitHub 专用，**未被该服务器授权**；服务器允许 publickey/password
+  - **该端口会偶发「建连后立刻 ECONNRESET」**，用 PowerShell 直连也一样 → 不是沙箱问题，
+    隔几分钟重试即可恢复，**不要因此判定「端口改了 / 被封了」**
+- 同机还跑着：旧版 `scplayer-stats`（`/opt/scplayer-stats`，PM2，端口 **3001**）、nginx(80)、3000 端口某服务
+  → 本项目端口选 **5001** 避让
+- 部署方式：**HTTP 增量推送，日常不需要走 SSH**
+  - `deploy/bootstrap.sh`（服务器上执行一次，幂等）：装 Node16/PM2 → 代码到 `/opt/scplayer-events-stats`
+    → 用 `public/` 初始化 `site/` → 写 `deploy/deploy-token.txt` → PM2 起 `deploy/server.mjs` 监听 0.0.0.0:5001 → ufw 放行
+  - `deploy/server.mjs`：静态服务 + `POST /api/deploy`（Bearer token，base64 写文件/删除）、
+    `GET /api/health`、`GET /api/manifest`（sha1 清单）
+  - `scripts/push-server.mjs`：本地比对 sha1 后**只推变化文件**（`--full` 全量 / `--check` 只比对）
+  - 地址与令牌放 **`local.config.json`（已 gitignore，不入库）**
+- 实测：首次全量 326 文件 / 5.5MB / 16.5s；无变化时幂等跳过；改 1 个文件 0.2s
+- 本机 **npm 被安全策略拦死**（会调黑名单里的 `reg.exe`），装不了 `ssh2`；
+  若将来要用密码登录服务器，改用 Python `paramiko`（PyPI 可通）
+
+## 线上发布（沙箱预览链接）
 - 发布对象是 **`public/` 目录**（纯静态），不是项目根
 - 分享链接：`https://93a5c2c68d004874bfff959e25daade5.sg.agentos-app.run`（sandboxId 同 ID，重发链接不变）
 - **用户的长期授权（2026-09-18 明确要求）**：「以后每次做完都同步更新到线上分享链接，让我看效果」

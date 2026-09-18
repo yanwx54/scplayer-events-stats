@@ -14,6 +14,9 @@
     "rebuild": "node scripts/build-db.mjs",
     "verify": "node scripts/verify.mjs",
     "verify:range": "node scripts/verify-range.mjs",
+    "deploy": "node scripts/push-server.mjs",
+    "deploy:full": "node scripts/push-server.mjs --full",
+    "deploy:check": "node scripts/push-server.mjs --check",
     "shoot": "node scripts/shoot.cjs"
   },
   "keywords": ["starcraft", "eloboard", "player-stats", "esports"],
