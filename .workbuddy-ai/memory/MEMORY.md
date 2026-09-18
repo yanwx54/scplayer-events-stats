@@ -22,6 +22,11 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 - 单局粒度：一条 match = 双方各计一场，所以「选手场次总和 = 对局数 × 2」
 - `elo_delta` 恒为胜方正增益；`ELO 净变` 是本口径内的指标，`官方 ELO` 只是站点全局值
 - 日期筛选走 `daily.json` 的「日期 × 赛事」稀疏桶，前端二分后线性求和
+- **月度 ELO（`monthly[].eloChg` / `eloEnd`）**：
+  - `eloChg` = 当月 ELO 净变；站点未结算的对局不返回 `elo_delta`（如 2026-09 整月缺），
+    这类月份为 `null`，图表按 0 处理（与「官方 ELO 也未动」自洽，**不要补 0 后当成真实涨幅**）
+  - `eloEnd` = 月末 ELO，由官方 ELO 向前倒推：`eloEnd(M) = 官方ELO − Σ(月份晚于 M 的 eloChg)`
+  - 自洽条件（verify.mjs 已断言）：Σ`eloChg` == `eloNet`；末月 == 官方 ELO；相邻差 == 后一月 `eloChg`
 - **`maps.json` 按「对局」计数**（不是选手出场次数）：总场次 = 本赛季对局数，**不要再乘 2**
 - **地图对抗胜率是「6 个方向」**：`ZvP ZvT PvZ PvT TvZ TvP`，每列只统计该方向**前者**的胜率。
   同一场比赛**同时计入两个相反方向**，所以互为反向的两列（如 ZvP/PvZ）场次相同、胜率互补合计 100%。
@@ -41,8 +46,18 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 
 ## 测试约定
 - `shoot.cjs` 的期望值必须**从构建产物（index.json 等）推导**，不要写死数字 —— 数据每天都在涨
+  （`PAGE_SIZE` 这类代码常量则从 `app.js` 源码正则读取）
 - Playwright 点下拉框附近的元素前记得 `blur()`，否则展开的下拉会拦截点击导致超时
 - 断言失败时先怀疑产品、再怀疑测试（曾在这一点上误判过一次）
+- **两栏/多表布局下 `tbody tr:first-child` 会命中多个元素**（Playwright strict mode 报错），
+  断言选择器要限定到具体一栏（`#xxx .table-wrap:first-child `）
+- Playwright `screenshot({clip})` 的坐标是**页面坐标**，而 `boundingBox()` 返回**视口坐标**，
+  页面滚动过就会错位 → 直接对 locator 做元素截图
+
+## 路由状态管理（踩过两次的坑）
+- **以 URL 为唯一事实来源**：凡是从 query 参数派生的筛选/页签状态（排行页 `event`、详情页 `tab`），
+  无参数时必须**显式复位**，不能写成 `if (params.get(x)) state.y = params.get(x)`
+- 切换这些状态时用 `history.replaceState` 同步地址栏（不触发 hashchange，不整页重渲染）
 
 ## 每日自动化
 id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：
