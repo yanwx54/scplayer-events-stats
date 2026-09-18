@@ -23,8 +23,10 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 - `elo_delta` 恒为胜方正增益；`ELO 净变` 是本口径内的指标，`官方 ELO` 只是站点全局值
 - 日期筛选走 `daily.json` 的「日期 × 赛事」稀疏桶，前端二分后线性求和
 - **`maps.json` 按「对局」计数**（不是选手出场次数）：总场次 = 本赛季对局数，**不要再乘 2**
-- **地图对抗胜率**：规范顺序 `RACE_ORDER = {Z:0,P:1,T:2}`，`ZvP`/`ZvT`/`PvT` 的 `w1`
-  恒为规范顺序中**前者**的胜场（`ZvP.wr1` = 虫族胜率）；同族单列 `mirror` 不计胜率
+- **地图对抗胜率是「6 个方向」**：`ZvP ZvT PvZ PvT TvZ TvP`，每列只统计该方向**前者**的胜率。
+  同一场比赛**同时计入两个相反方向**，所以互为反向的两列（如 ZvP/PvZ）场次相同、胜率互补合计 100%。
+  `maps.json` 的 `matchups[k]` 结构是 **`{g, w, wr}`**（不是 `{g, w1, w2, wr1}`）。
+  自检口径：`Σ六方向场次 ÷ 2 + mirror + unknownRace === games`（**÷2 不能漏**，每场被算了两次）
 
 ## 环境坑（会反复踩，务必记住）
 - **沙箱内 `curl` 走系统代理会卡在 TLS 重协商（HTTP 000）**；抓取一律用 Node 原生 `fetch`
@@ -32,6 +34,8 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
 - **沙箱写不进 `.git/refs/remotes/origin/`**，`git-backup.mjs` 改用 `.git/packed-refs` 校准追踪引用
 - `ssh -T git@github.com` 会间歇性 Connection reset，推送需重试；`~/.ssh/config` 已映射到 `ssh.github.com:443`
 - Playwright 复用 `D:\WorkSpace\scplayer-stats\node_modules`，须指定 `executablePath` 指向 `chromium-1200`
+- Playwright **元素截图会被固定顶栏 `.topbar` 盖住**：截图前 `display:none` + 等 200ms
+  （`visibility:hidden` 不生效，导航仍会被画出来）
 - 写脚本文件用 Write 工具，不要用 Bash heredoc（`${...}` 会被 shell 展开报 Bad substitution）
 - 手工提交推送统一走 `node scripts/git-backup.mjs --msg "feat: ..."`（自动 add -A + 提交 + 重试推送 + 校准追踪引用）
 
