@@ -1,0 +1,34 @@
+import { readFile } from 'node:fs/promises';
+const R = 'D:/WorkSpace/Project07_scplayer-stats/data/raw/';
+const evs = {};
+for (const e of [43, 33, 64]) evs[e] = JSON.parse(await readFile(R + `event-${e}.json`, 'utf8'));
+const all = [...evs[43], ...evs[33], ...evs[64]];
+console.log('total matches', all.length);
+const players = new Map();
+for (const m of all) for (const p of m.participants) {
+  if (!players.has(p.player_id)) players.set(p.player_id, { id: p.player_id, name: p.name, race: p.race, games: 0 });
+  const o = players.get(p.player_id); o.games++;
+  if (!o.race && p.race) o.race = p.race;
+}
+console.log('distinct players', players.size);
+console.log('races', JSON.stringify([...players.values()].reduce((a, p) => { a[p.race || '?'] = (a[p.race || '?'] || 0) + 1; return a; }, {})));
+const keys = new Set(); for (const m of all) Object.keys(m).forEach(k => keys.add(k));
+console.log('match keys', [...keys].join(','));
+const pkeys = new Set(); for (const m of all) for (const p of m.participants) Object.keys(p).forEach(k => pkeys.add(k));
+console.log('participant keys', [...pkeys].join(','));
+const cnt = (f) => { const a = {}; for (const m of all) { const v = f(m); a[v] = (a[v] || 0) + 1; } return a; };
+console.log('by event', JSON.stringify(cnt(m => m.event_id)));
+console.log('by format', JSON.stringify(cnt(m => m.format_raw)));
+console.log('by category', JSON.stringify(cnt(m => m.category)));
+console.log('by round', JSON.stringify(cnt(m => m.round_label)));
+const dates = all.map(m => m.played_on).sort();
+console.log('date range', dates[0], '~', dates.at(-1));
+console.log('maps', new Set(all.map(m => m.map_name)).size);
+console.log('map names', JSON.stringify([...new Set(all.map(m => m.map_name))]));
+console.log('elo_delta null count', all.filter(m => m.elo_delta == null).length);
+console.log('sample multi-set:', JSON.stringify(all.find(m => m.format_raw && m.format_raw.includes('(')) || all[0]));
+const dist = [...players.values()].sort((a, b) => b.games - a.games);
+console.log('top15', dist.slice(0, 15).map(p => `${p.name}(${p.id},${p.race},${p.games})`).join(' | '));
+console.log('>=100 games', dist.filter(p => p.games >= 100).length, '>=50', dist.filter(p => p.games >= 50).length, '>=10', dist.filter(p => p.games >= 10).length);
+console.log('team_name samples', JSON.stringify([...new Set(all.flatMap(m => m.participants.map(p => p.team_name)))].slice(0, 30)));
+console.log('series samples', JSON.stringify([...new Set(all.map(m => m.series))].slice(0, 20)));

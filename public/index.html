@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SC 赛事选手数据查询 · Major / K League / Semi-Major</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233d5afe'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='15' font-weight='700' fill='white' text-anchor='middle'%3ESC%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/">
+    <span class="brand-mark">SC</span>
+    <span class="brand-text">
+      <strong>选手数据查询</strong>
+      <em>Major · K League · Semi-Major</em>
+    </span>
+  </a>
+  <nav class="nav" id="nav">
+    <a href="#/" data-nav="home">总览</a>
+    <a href="#/players" data-nav="players">选手排行</a>
+    <a href="#/h2h" data-nav="h2h">双方对战</a>
+    <a href="#/maps" data-nav="maps">地图情报</a>
+  </nav>
+</header>
+
+<main id="app">
+  <div class="loading">正在加载数据…</div>
+</main>
+
+<footer class="footer">
+  <div>数据来源 <a href="https://eloboard.com/events/43" target="_blank" rel="noopener">메이저 프로리그</a> ·
+    <a href="https://eloboard.com/events/33" target="_blank" rel="noopener">K리그</a> ·
+    <a href="https://eloboard.com/events/64" target="_blank" rel="noopener">준메이저 프로리그</a></div>
+  <div id="builtAt" class="muted"></div>
+</footer>
+
+<div id="toast" class="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "sc-events-stats",
+  "version": "1.0.0",
+  "description": "eloboard 三大赛事（메이저 프로리그 / K리그 / 준메이저 프로리그）选手数据查询网站",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "sync": "node scripts/sync.mjs",
+    "sync:full": "node scripts/sync.mjs --full",
+    "fetch": "node scripts/fetch-matches.mjs && node scripts/fetch-players.mjs && node scripts/fetch-avatars.mjs",
+    "build": "node scripts/build-db.mjs",
+    "rebuild": "node scripts/build-db.mjs",
+    "verify": "node scripts/verify.mjs",
+    "shoot": "node scripts/shoot.cjs"
+  },
+  "keywords": ["starcraft", "eloboard", "player-stats", "esports"],
+  "license": "MIT"
+}

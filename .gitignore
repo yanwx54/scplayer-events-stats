@@ -1,0 +1,14 @@
+# 依赖
+node_modules/
+
+# 抓取缓存（可从 eloboard API 重新拉取，且文件大、每日全量重写，不入库）
+data/raw/
+
+# 自检截图
+shots/
+
+# 杂项
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
