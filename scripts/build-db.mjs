@@ -13,8 +13,8 @@
  */
 import { mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
 import path from 'node:path';
+import { ROOT } from './_paths.mjs';
 
-const ROOT = path.resolve(import.meta.dirname, '..');
 const RAW = path.join(ROOT, 'data', 'raw');
 const OUT = path.join(ROOT, 'public', 'data');
 

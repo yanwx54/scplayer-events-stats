@@ -4,9 +4,9 @@
  */
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { ROOT } from './_paths.mjs';
 
 const BASE = 'https://eloboard.com';
-const ROOT = path.resolve(import.meta.dirname, '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function getJson(url) {

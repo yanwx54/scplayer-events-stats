@@ -17,8 +17,19 @@
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { ROOT } from './_paths.mjs';
 
-const ROOT = path.resolve(import.meta.dirname, '..');
+// Node 16 兼容：全局 fetch 是 Node 18+ 才有的。服务器（Ubuntu 18.04 / Node 16.20.2）
+// 必须用 `node --experimental-fetch` 启动，否则这里给出明确提示而不是晦涩的 ReferenceError。
+if (typeof globalThis.fetch !== 'function') {
+  console.error(
+    '✗ 当前 Node (' + process.version + ') 没有全局 fetch。\n' +
+    '  Node 16 请用：node --experimental-fetch scripts/sync.mjs\n' +
+    '  （Node 18+ 直接运行即可）'
+  );
+  process.exit(1);
+}
+
 const RAW = path.join(ROOT, 'data', 'raw');
 const AVATARS = path.join(ROOT, 'public', 'avatars');
 const BASE = 'https://eloboard.com';

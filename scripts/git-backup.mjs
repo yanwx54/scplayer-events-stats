@@ -15,8 +15,8 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { ROOT } from './_paths.mjs';
 
-const ROOT = path.resolve(import.meta.dirname, '..');
 const FORCE = process.argv.includes('--force');
 /** 手工提交时可用 --msg 覆盖默认的「同步 YYYY-MM-DD」信息 */
 const CUSTOM_MSG = (() => {

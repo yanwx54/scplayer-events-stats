@@ -114,6 +114,7 @@ Project07_scplayer-stats/
 │       ├── daily.json           # 「日期 × 赛事」分桶稀疏矩阵（供日期区间筛选）
 │       └── players/{id}.json    # 每名选手的完整明细（86 个）
 ├── scripts/
+│   ├── _paths.mjs               # 共享 ROOT（兼容 Node 16，替代 import.meta.dirname）
 │   ├── sync.mjs                 # 每日增量同步（抓新对局 + 补选手/头像 + 重建）
 │   ├── fetch-matches.mjs        # 抓取三大赛事全量比赛
 │   ├── fetch-players.mjs        # 抓取选手元数据
@@ -124,6 +125,11 @@ Project07_scplayer-stats/
 │   ├── crosscheck.mjs           # H2H 交叉复核
 │   ├── git-backup.mjs           # 提交并推送到 GitHub
 │   └── shoot.cjs                # Playwright 截图自检
+├── deploy/                      # 服务器部署与自助更新
+│   ├── bootstrap.sh             # 服务器一键部署（执行一次）
+│   ├── server.mjs               # 线上静态服务 + 令牌部署接口（Node 16 兼容）
+│   ├── self-sync.sh             # 服务器自助同步（cron 调用）
+│   └── install-cron.sh          # 安装/卸载自助同步 cron（幂等）
 └── data/raw/                    # 原始 API 响应（抓取产物，不入库）
 ```
 
@@ -177,6 +183,42 @@ scripts/sync.mjs  →  scripts/verify.mjs  →  scripts/verify-range.mjs  →  s
 - 推送后校准本地追踪引用；末尾输出 `GIT_BACKUP_OK`
 
 仓库：<https://github.com/yanwx54/scplayer-events-stats>
+
+## 服务器自助更新（不依赖本地电脑）
+
+线上站点**自己定时抓取并更新**，本地电脑关机也照常跑。
+
+```
+cron（每天 10:20 / 20:20，服务器时区 Asia/Shanghai）
+  └─ deploy/self-sync.sh
+       ├─ git fetch + reset --hard origin/main   取最新代码
+       ├─ node --experimental-fetch scripts/sync.mjs   增量抓取 + 重建
+       ├─ verify.mjs + verify-range.mjs          校验
+       └─ rsync public/ → site/                  发布
+```
+
+安装（服务器上，root，只需一次）：
+
+```bash
+cd /opt/scplayer-events-stats
+bash deploy/install-cron.sh                 # 默认 10:20 与 20:20
+SYNC_TIMES="09:30" bash deploy/install-cron.sh   # 自定义时间
+bash deploy/install-cron.sh --remove        # 卸载
+```
+
+- 日志：`tail -f /var/log/scplayer-events-sync.log`
+- 手动试跑：`bash deploy/self-sync.sh`
+- **校验不过就不发布**：sync / verify 任一步失败，`site/` 保持原样，线上不会出现半成品
+- `flock` 单实例锁：上一轮没跑完时本轮直接跳过
+- `site/` 不在 git 里、`data/` 被 gitignore，所以 `reset --hard` 不会动它们
+
+### 服务器环境注意（Ubuntu 18.04 / Node 16.20.2）
+
+服务器 glibc 2.27 跑不了 Node 18+ 官方二进制，只能用 Node 16，因此：
+
+- **脚本里不能用 `import.meta.dirname`**（Node 20.11+）→ 统一从 `scripts/_paths.mjs` 取 `ROOT`
+- **Node 16 没有全局 `fetch`** → 必须 `node --experimental-fetch`（`sync.mjs` 缺 fetch 时会给出明确提示）
+- 其余 Node 18+ API（`structuredClone` / `AbortSignal.timeout`）一律不要用
 
 ### 版本控制约定
 

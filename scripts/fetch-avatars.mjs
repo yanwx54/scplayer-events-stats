@@ -3,9 +3,9 @@
  */
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { ROOT } from './_paths.mjs';
 
 const BASE = 'https://eloboard.co.kr/static/';
-const ROOT = path.resolve(import.meta.dirname, '..');
 const OUT = path.join(ROOT, 'public', 'avatars');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
