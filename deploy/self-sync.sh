@@ -84,8 +84,18 @@ if command -v rsync >/dev/null 2>&1; then
   # .manifest.json 是 server.mjs 的缓存，别删
   rsync -a --delete --exclude '.manifest.json' "$APP_DIR/public/" "$SITE_DIR/"
 else
+  # 没有 rsync 时手工做镜像：先删掉 site/ 里已从 public/ 消失的文件，再整体覆盖。
+  # （只 cp 不做删除的话，选手文件被移除后会永远残留在线上）
+  _new="$(mktemp)"; _old="$(mktemp)"
+  (cd "$APP_DIR/public" && find . -type f | sed 's|^\./||') | sort > "$_new"
+  (cd "$SITE_DIR" && find . -type f ! -name '.manifest.json' | sed 's|^\./||') | sort > "$_old"
+  _stale="$(comm -23 "$_old" "$_new")"
+  if [ -n "$_stale" ]; then
+    echo "$_stale" | while IFS= read -r f; do [ -n "$f" ] && rm -f "$SITE_DIR/$f"; done
+    echo "  清理失效文件 $(printf '%s\n' "$_stale" | grep -c .) 个"
+  fi
+  rm -f "$_new" "$_old"
   cp -a "$APP_DIR/public/." "$SITE_DIR/"
-  echo "  (无 rsync，用 cp 覆盖；残留文件不会被清理)"
 fi
 echo "  ✓ 站点文件 $(find "$SITE_DIR" -type f | wc -l) 个"
 
