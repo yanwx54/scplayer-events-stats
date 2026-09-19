@@ -11,7 +11,7 @@
  * 选手中文名 / 英文 ID 依据 docs/韩国选手名字.md，
  * 地图中文名依据 docs/地图翻译规则.md；文档未涉及的一律保留原韩文。
  */
-import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -255,8 +255,21 @@ for (const m of matches) {
 const wr = (w, g) => (g ? Math.round((w / g) * 1000) / 10 : 0);
 
 /* ---------- 输出选手明细 ---------- */
-await rm(path.join(OUT, 'players'), { recursive: true, force: true });
-await mkdir(path.join(OUT, 'players'), { recursive: true });
+// 只逐个清理「已失效」的旧文件，不再整目录 rm。
+// 原因：① 整目录 rm（86 个文件）会触发沙箱的批量删除保护（单轮 >50 个即拦截）；
+//       ② 逐文件覆盖写本来就是幂等的，整目录删除纯属多余动作。
+const playersOut = path.join(OUT, 'players');
+await mkdir(playersOut, { recursive: true });
+const keepIds = new Set([...P.values()].filter((pl) => pl.games > 0).map((pl) => pl.id));
+let pruned = 0;
+for (const f of await readdir(playersOut)) {
+  const mm = /^(\d+)\.json$/.exec(f);
+  if (mm && !keepIds.has(Number(mm[1]))) {
+    await rm(path.join(playersOut, f), { force: true });
+    pruned++;
+  }
+}
+if (pruned) console.log(`pruned stale player files: ${pruned}`);
 
 const index = [];
 const globalMonth = {};

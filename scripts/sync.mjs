@@ -99,6 +99,28 @@ async function syncEvent(eventId) {
   return { eventId, before: existing.length, after: merged.length, added, removed, changed, officialTotal: total, pages: pages + 1 };
 }
 
+/* ---------- 拉取全量选手列表 ---------- */
+/**
+ * 官方 /api/players/{id} 详情接口已不稳定：对相当一部分 id（含当红选手）稳定返回 500。
+ * 列表接口 /api/players?limit=&offset= 正常，一次能拿全（实测 1267 人 / 7 页），
+ * 字段与详情接口一致（name / main_race / elo / thumb_url / soop_id / college_id 齐全），
+ * 因此改为「列表为主 + 详情兜底」。
+ */
+async function fetchPlayerList() {
+  const list = new Map();
+  let total = 0, pages = 0;
+  for (let offset = 0; pages < MAX_PAGES; pages++) {
+    const { data, total: t } = await getJson(`${BASE}/api/players?limit=${PAGE}&offset=${offset}`);
+    if (t) total = t;
+    if (!Array.isArray(data) || data.length === 0) break;
+    for (const p of data) list.set(p.id, p);
+    offset += PAGE;
+    if (offset >= total) break;
+    await sleep(120);
+  }
+  return { list, total };
+}
+
 /* ---------- 补抓选手元数据 ---------- */
 async function syncPlayers(allMatches) {
   const file = path.join(RAW, 'players.json');
@@ -108,14 +130,42 @@ async function syncPlayers(allMatches) {
     if (!players[p.player_id]) need.add(p.player_id);
   }
   const added = [];
+
+  let list = new Map();
+  try {
+    ({ list } = await fetchPlayerList());
+    console.log(`  选手列表：官方 ${list.size} 人`);
+  } catch (e) {
+    console.warn(`  ⚠ 选手列表接口失败（${e.message}），退回逐 id 详情接口`);
+  }
+
+  // 列表未覆盖的（如女子组等不在默认列表里的选手）退回详情接口，失败则跳过
+  const rest = [];
   for (const id of [...need].sort((a, b) => a - b)) {
-    const { data } = await getJson(`${BASE}/api/players/${id}`);
-    players[id] = data;
-    added.push(`${data.name}(${id})`);
+    const p = list.get(id);
+    if (p) {
+      players[id] = p;
+      added.push(`${p.name}(${id})`);
+    } else {
+      rest.push(id);
+    }
+  }
+
+  let unresolved = 0;
+  for (const id of rest) {
+    try {
+      const { data } = await getJson(`${BASE}/api/players/${id}`);
+      players[id] = data;
+      added.push(`${data.name}(${id})`);
+    } catch (e) {
+      unresolved++;
+      console.warn(`   选手 ${id} 详情接口失败（${e.message}），跳过（构建时会用比赛记录兜底）`);
+    }
     await sleep(80);
   }
+
   if (added.length) await writeFile(file, JSON.stringify(players));
-  return { total: Object.keys(players).length, added };
+  return { total: Object.keys(players).length, added, unresolved };
 }
 
 /* ---------- 补下载头像 ---------- */
@@ -165,6 +215,7 @@ async function main() {
 
   const pl = await syncPlayers(allMatches);
   console.log(`  选手元数据：${pl.total} 人${pl.added.length ? `，新增 ${pl.added.join('、')}` : '，无新增'}`);
+  if (pl.unresolved) console.log(`  ⚠ ${pl.unresolved} 名选手元数据未取到（已由比赛记录兜底）`);
 
   const av = await syncAvatars();
   console.log(`  头像：${av.length ? `新增 ${av.length} 张（${av.join('、')}）` : '无新增'}`);

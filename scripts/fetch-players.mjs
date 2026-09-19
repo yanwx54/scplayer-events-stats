@@ -14,7 +14,7 @@ async function getJson(url) {
     try {
       const r = await fetch(url, { headers: { accept: 'application/json' } });
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      return await r.json();
+      return { data: await r.json(), total: Number(r.headers.get('x-total-count') || 0) };
     } catch (e) {
       if (i === 4) throw e;
       await sleep(600 * i);
@@ -39,17 +39,51 @@ for (const e of [43, 33, 64]) {
 console.log('players to fetch:', ids.size, '| null played_on:', nullDate.length, '| missing race:', missingRace.length);
 if (nullDate.length) console.log('null dates sample', JSON.stringify(nullDate.slice(0, 5)));
 
+/**
+ * 官方 /api/players/{id} 详情接口已不稳定：对相当一部分 id 稳定返回 500。
+ * 列表接口 /api/players?limit=&offset= 正常且字段一致，改为「列表为主 + 详情兜底」。
+ */
+const PAGE = 200;
+const all = new Map();
+let officialTotal = 0;
+for (let offset = 0; ; offset += PAGE) {
+  const page = await getJson(`${BASE}/api/players?limit=${PAGE}&offset=${offset}`);
+  const { data, total } = page;
+  if (total) officialTotal = total;
+  if (!Array.isArray(data) || data.length === 0) break;
+  for (const p of data) all.set(p.id, p);
+  process.stdout.write(`   列表 ${all.size}/${officialTotal || '?'}\r`);
+  if (offset + PAGE >= officialTotal) break;
+  await sleep(120);
+}
+console.log(`\n   选手列表：官方 ${officialTotal} 人，取到 ${all.size} 人`);
+
 const out = {};
 const list = [...ids].sort((a, b) => a - b);
+const rest = [];
 let done = 0;
 for (const id of list) {
-  const p = await getJson(`${BASE}/api/players/${id}`);
-  out[id] = p;
-  done++;
-  process.stdout.write(`   ${done}/${list.length}\r`);
+  if (all.has(id)) {
+    out[id] = all.get(id);
+    done++;
+  } else {
+    rest.push(id);
+  }
+}
+// 列表未覆盖的（如女子组）退回详情接口，失败则跳过（构建时用比赛记录兜底）
+let unresolved = 0;
+for (const id of rest) {
+  try {
+    const { data } = await getJson(`${BASE}/api/players/${id}`);
+    out[id] = data;
+    done++;
+  } catch (e) {
+    unresolved++;
+    console.warn(`   选手 ${id} 详情接口失败（${e.message}），跳过`);
+  }
   await sleep(80);
 }
-console.log(`\n   ${done}/${list.length} 完成`);
+console.log(`   ${done}/${list.length} 完成${unresolved ? `，${unresolved} 名未取到` : ''}`);
 await mkdir(raw, { recursive: true });
 await writeFile(path.join(raw, 'players.json'), JSON.stringify(out));
 console.log('-> data/raw/players.json');

@@ -43,6 +43,17 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
   （`visibility:hidden` 不生效，导航仍会被画出来）
 - 写脚本文件用 Write 工具，不要用 Bash heredoc（`${...}` 会被 shell 展开报 Bad substitution）
 - 手工提交推送统一走 `node scripts/git-backup.mjs --msg "feat: ..."`（自动 add -A + 提交 + 重试推送 + 校准追踪引用）
+- **官方 `/api/players/{id}` 详情接口已坏**（2026-09-19 发现）：对相当一部分 id 稳定 **500**，
+  含 김지성#29 这类当红选手 → 抓选手一律走**列表接口** `/api/players?limit=200&offset=n`
+  （正常、1267 人 / 7 页、字段与详情接口一致）。列表未覆盖的女子组（5988/5990/5992）退回详情兜底。
+  已改 `sync.mjs`（`fetchPlayerList()`）与 `fetch-players.mjs`，**别再改回逐 id 详情抓取**
+- **`build-db.mjs` 禁止整目录 `rm(public/data/players)`** —— 86 个文件会触发沙箱批量删除保护
+  （`SAFE_DELETE_BULK_CONFIRM_REQUIRED`，单轮 >50 个即拦）。现在是逐个清理失效文件，幂等
+- 本机（用户 AAA）**没有 Playwright 包**，`shoot.cjs` 里写死的 `D:/WorkSpace/scplayer-stats/...`
+  路径不存在且 npm 装不了 → `shoot.cjs` 跑不起来。替代方案：用 Playwright 缓存里的
+  `C:/Users/AAA/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe` 做无头渲染验收
+  （`--virtual-time-budget` 等 SPA 加载；`--screenshot` 与 `--dump-dom` 不能同时用）
+- **`local.config.json` 不入库**（gitignore）→ 新克隆的副本缺服务器地址与令牌，`npm run deploy` 用不了
 
 ## 表格与排序
 - 表头排序统一走三个 helper（`app.js` 里 `wrCell` 之后）：`sortableTH(cols, sort)` /
