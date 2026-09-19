@@ -54,6 +54,14 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
   `C:/Users/AAA/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe` 做无头渲染验收
   （`--virtual-time-budget` 等 SPA 加载；`--screenshot` 与 `--dump-dom` 不能同时用）
 - **`local.config.json` 不入库**（gitignore）→ 新克隆的副本缺服务器地址与令牌，`npm run deploy` 用不了
+- **本机（用户 AAA）`git push` 会卡死**：`git ls-remote` 正常（匿名读），但 push 卡在
+  `git credential-manager get`（用 `GIT_TRACE=1` 定位），40s 超时。
+  `git-credential-wincred` 里没有 github.com 凭据，本机 `~/.ssh/id_ed25519` **也未授权给 GitHub**
+  （`ssh -T git@github.com` → Permission denied），没有 `gh`、没有 GITHUB_TOKEN。
+  → 同 session 前两次推送成功过、之后一直超时，属**间歇性**问题；`git-backup.mjs` 因此会
+  只完成提交、推送阶段被 SIGTERM。**遇到时先重试几次，仍不行就如实告知用户「提交已完成、推送待办」**
+- 本机 `~/.ssh/config` 只配了那台服务器（Host 199.180.116.188 / Port 27168 / User root），
+  **免密登录可用**；服务器 repo 在 `/opt/scplayer-events-stats`，`site/` 是线上站点目录
 
 ## 表格与排序
 - 表头排序统一走三个 helper（`app.js` 里 `wrCell` 之后）：`sortableTH(cols, sort)` /
@@ -79,9 +87,40 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
   无参数时必须**显式复位**，不能写成 `if (params.get(x)) state.y = params.get(x)`
 - 切换这些状态时用 `history.replaceState` 同步地址栏（不触发 hashchange，不整页重渲染）
 
-## 每日自动化
+## 每日自动化（本地，现在只是**备份手段**）
 id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：
 `sync.mjs` → `verify.mjs` → `verify-range.mjs` → `git-backup.mjs` → **`push-server.mjs`** → 中文简报
+
+> **2026-09-19 起线上已改为服务器自助更新**（见下节），本自动化不再是必需品。
+> 两者同时跑不冲突（服务器只读 git、从不 push），但本地这台如果关着，线上照样更新。
+
+## 服务器自助定时更新（2026-09-19 上线，**线上主路径**）
+服务器**自己**定时抓取并更新，不依赖本地电脑：
+
+```
+cron 10:20 / 20:20（root crontab，TZ=Asia/Shanghai）
+  └─ /opt/scplayer-events-stats/deploy/self-sync.sh
+       git fetch + reset --hard origin/main → node --experimental-fetch scripts/sync.mjs
+       → verify.mjs + verify-range.mjs → rsync public/ → site/
+```
+
+- 装/卸：`bash deploy/install-cron.sh` / `--remove`（幂等，先备份 crontab 到 `/root/crontab.backup.*`）
+- 日志 `/var/log/scplayer-events-sync.log`；手动试跑 `bash deploy/self-sync.sh`
+- `flock` 单实例锁；**sync/verify 任一步失败就不发布**，`site/` 保持原样
+- 实测：首次全量 56.7s，之后增量 5~9s；服务器**只读 git、从不 push**，
+  所以 `reset --hard` 安全（`site/` 未跟踪、`data/` 被 gitignore）
+- 时间选 10:20 是为了避开旧版 `scplayer-stats` 的 10:00 同步（同机 root crontab 已有 5 个别的任务）
+- **改 self-sync.sh 后必须 push 到 GitHub**，服务器下一轮 `git fetch` 才会生效（本地改不算数）
+
+### 服务器 Node 16 兼容（改服务器侧脚本必读）
+- node/pm2 由 **nvm** 安装：`/root/.nvm/versions/node/v16.20.2/bin/`（不在 /usr/local/bin，
+  cron 的 PATH 里也没有 nvm → self-sync.sh 里有绝对路径兜底查找）
+- **`import.meta.dirname` 会直接报错**（Node 20.11+）→ 统一用 `scripts/_paths.mjs` 导出的 `ROOT`
+- **没有全局 `fetch`**，必须 `node --experimental-fetch`（实测能读 `x-total-count`）；
+  `sync.mjs` 缺 fetch 时会打印明确提示而不是 ReferenceError
+- 禁止 `structuredClone` / `AbortSignal.timeout`；`.at(-1)` 可用 ✓
+- 服务器原本**没有 rsync**，已 `apt-get install -y rsync`（3.1.2）
+- 验证方式：`env -i PATH=/usr/bin:/bin HOME=/root bash deploy/self-sync.sh`（模拟 cron 最小环境）
 
 ## 服务器部署（用户自有服务器）
 - 目标地址 **`http://199.180.116.188:5001/`** —— **已上线运行**（2026-09-18 部署完成，用户要求可在外网随时访问）
