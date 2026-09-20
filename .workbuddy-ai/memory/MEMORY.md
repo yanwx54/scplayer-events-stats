@@ -1,183 +1,92 @@
 # 项目长期约定（Project07_scplayer-stats）
 
-## 项目定位
-eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저 프로리그）选手数据查询网站。
-纯静态站点（`public/`）+ 零依赖 Node 脚本（`scripts/`）。仓库：`yanwx54/scplayer-events-stats`（公开）。
+## 定位与硬约束
+eloboard 三大赛事（43 职业联赛 / 33 K联赛 / 64 半职业联赛）选手数据站。纯静态 `public/` + 零依赖 Node `scripts/`。
+仓库 `yanwx54/scplayer-events-stats`（公开）。线上：自有服务器 http://199.180.116.188:5001/ 。
 
-## 硬约束（用户明确要求）
-- **数据来源只能是这三个赛事**，不得引入其他赛事
-- **不要改动 `D:\WorkSpace` 下的其他项目**（尤其是参考项目 `D:\WorkSpace\scplayer-stats`，只读）
-- 数据只保留 **2026-01-01 之后**（`build-db.mjs` 的 `CUTOFF` 常量）
-- 选手/地图译名以 `docs/` 下两份文档为准；文档未涉及的保留原韩文
-- 所有地图板块**只展示本赛季地图**（`SEASON_ROW_IDX` 指定的 7 张）
-- **赛事中文名（用户指定，非文档）**：`메이저 프로리그`→职业联赛、`K리그`→K联赛、
-  `준메이저 프로리그`→半职业联赛。前端一律用 `evHTML(id)` / `evZh(id)` 渲染，别再直出 `EVENTS[k].name`
-
-## 改译名的流程
-1. 改 `docs/韩国选手名字.md` 或 `docs/地图翻译规则.md`
-2. 同步到 `scripts/build-db.mjs` 顶部的 `PLAYER_ROWS` / `MAP_ROWS` 常量（脚本不解析 Markdown）
-3. `npm run build && npm run verify`
+- 数据来源**只能是这三个赛事**；只保留 **2026-01-01 之后**（`build-db.mjs` 的 `CUTOFF`）
+- **不要改动 `D:\WorkSpace` 下其他项目**（参考项目 `scplayer-stats` 只读）
+- 译名以 `docs/` 两份文档为准，未涉及的保留韩文；地图只展示本赛季 7 张（`SEASON_ROW_IDX`）
+- 赛事中文名（用户指定）：`메이저 프로리그`→职业联赛、`K리그`→K联赛、`준메이저 프로리그`→半职业联赛。
+  前端一律用 `evHTML(id)`/`evZh(id)`，别直出 `EVENTS[k].name`
+- 改译名流程：改 `docs/` → 同步 `build-db.mjs` 顶部 `PLAYER_ROWS`/`MAP_ROWS` → `npm run build && npm run verify`
 
 ## 数据口径
-- 单局粒度：一条 match = 双方各计一场，所以「选手场次总和 = 对局数 × 2」
-- `elo_delta` 恒为胜方正增益；`ELO 净变` 是本口径内的指标，`官方 ELO` 只是站点全局值
+- 单局粒度：一条 match = 双方各计一场 → 选手场次总和 == 对局数 × 2
+- `elo_delta` 恒为胜方正增益；`ELO 净变` 是本口径指标，`官方 ELO` 是站点全局值
 - 日期筛选走 `daily.json` 的「日期 × 赛事」稀疏桶，前端二分后线性求和
-- **月度 ELO（`monthly[].eloChg` / `eloEnd`）**：
-  - `eloChg` = 当月 ELO 净变；站点未结算的对局不返回 `elo_delta`（如 2026-09 整月缺），
-    这类月份为 `null`，图表按 0 处理（与「官方 ELO 也未动」自洽，**不要补 0 后当成真实涨幅**）
-  - `eloEnd` = 月末 ELO，由官方 ELO 向前倒推：`eloEnd(M) = 官方ELO − Σ(月份晚于 M 的 eloChg)`
-  - 自洽条件（verify.mjs 已断言）：Σ`eloChg` == `eloNet`；末月 == 官方 ELO；相邻差 == 后一月 `eloChg`
-- **`maps.json` 按「对局」计数**（不是选手出场次数）：总场次 = 本赛季对局数，**不要再乘 2**
-- **地图对抗胜率是「6 个方向」**：`ZvP ZvT PvZ PvT TvZ TvP`，每列只统计该方向**前者**的胜率。
-  同一场比赛**同时计入两个相反方向**，所以互为反向的两列（如 ZvP/PvZ）场次相同、胜率互补合计 100%。
-  `maps.json` 的 `matchups[k]` 结构是 **`{g, w, wr}`**（不是 `{g, w1, w2, wr1}`）。
-  自检口径：`Σ六方向场次 ÷ 2 + mirror + unknownRace === games`（**÷2 不能漏**，每场被算了两次）
+- 月度 ELO：`eloChg`=当月净变（站点未结算的月为 `null`，图表按 0 处理，**不要补 0 当真实涨幅**）；
+  `eloEnd(M) = 官方ELO − Σ(晚于 M 的 eloChg)`。自洽：Σ`eloChg`==`eloNet`、末月==官方 ELO、相邻差==后一月 eloChg
+- `maps.json` **按对局计数**（不是选手出场），总场次 = 本赛季对局数，**不要再乘 2**
+- 地图对抗胜率 6 方向 `ZvP ZvT PvZ PvT TvZ TvP`，每列只统计前者；同场计入两个相反方向
+  → 反向两列场次相同、胜率互补。`matchups[k]` 结构 `{g,w,wr}`。
+  自检：`Σ六方向场次 ÷ 2 + mirror + unknownRace === games`（**÷2 不能漏**）
 
-## 环境坑（会反复踩，务必记住）
-- **沙箱内 `curl` 走系统代理会卡在 TLS 重协商（HTTP 000）**；抓取一律用 Node 原生 `fetch`
-- 访问本机服务要加 `--noproxy '*'`
-- **沙箱写不进 `.git/refs/remotes/origin/`**，`git-backup.mjs` 改用 `.git/packed-refs` 校准追踪引用
-- `ssh -T git@github.com` 会间歇性 Connection reset，推送需重试；`~/.ssh/config` 已映射到 `ssh.github.com:443`
-- Playwright 复用 `D:\WorkSpace\scplayer-stats\node_modules`，须指定 `executablePath` 指向 `chromium-1200`
-- Playwright **元素截图会被固定顶栏 `.topbar` 盖住**：截图前 `display:none` + 等 200ms
-  （`visibility:hidden` 不生效，导航仍会被画出来）
-- 写脚本文件用 Write 工具，不要用 Bash heredoc（`${...}` 会被 shell 展开报 Bad substitution）
-- 手工提交推送统一走 `node scripts/git-backup.mjs --msg "feat: ..."`（自动 add -A + 提交 + 重试推送 + 校准追踪引用）
-- **官方两个选手接口的差异（2026-09-20 踩过一次，务必记住）**：
-  - 详情 `/api/players/{id}`：**只有它返回真实 `college_name`**（战队名），但对相当一部分 id
-    稳定 **500**（含 김지성#29、신상문#100）→ 不能当主路径
-  - 列表 `/api/players?limit=200&offset=n`：稳定、1267 人 / 7 页，但 **`college_name` 恒为 null**
-    （实测 0/200 非空，只给 `college_id`）→ **光靠它会让战队名整片变成 null**
-    （注：2026-09-19 那条「列表字段与详情接口一致」的说法是错的，已纠正）
-  - **战队名的正确解法**：`GET /api/colleges` —— 1 个请求返回全部 **13 支**战队，
-    字段 `id` / `name` / `image_path` / `founded_on` / `is_disbanded` / `member_count` / …
-    用 `college_id → name` 解析即可，稳定且省请求。`sync.mjs` 的 `fetchColleges()` 就是干这个
-  - `build-db.mjs` 写的是 `college: raw.college_name || null`，所以
-    **`players.json` 里的 `college_name` 必须由 sync 补齐**，否则前端战队名全空
-- **`syncPlayers` 刷新「所有在册选手」**，不只是本地缺的（只补新增会导致两个问题：
-  ① 生涯战绩 wins/losses/last_played_on/elo 长期不更新；② 早期详情接口抓的条目缺 college_name）。
-  列表未覆盖的女子组（5988/5990/5992）退回详情兜底；已有数据且不在列表里的保持原样。
-  返回值字段是 **`refreshed`**（不再是 `added`），`dataChanged` 判断同步用了它
-- **`build-db.mjs` 禁止整目录 `rm(public/data/players)`** —— 86 个文件会触发沙箱批量删除保护
-  （`SAFE_DELETE_BULK_CONFIRM_REQUIRED`，单轮 >50 个即拦）。现在是逐个清理失效文件，幂等
-- 本机（用户 AAA）**没有 Playwright 包**，`shoot.cjs` 里写死的 `D:/WorkSpace/scplayer-stats/...`
-  路径不存在且 npm 装不了 → `shoot.cjs` 跑不起来。替代方案：用 Playwright 缓存里的
-  `C:/Users/AAA/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe` 做无头渲染验收
-  （`--virtual-time-budget` 等 SPA 加载；`--screenshot` 与 `--dump-dom` 不能同时用）
-- **`local.config.json` 不入库**（gitignore）→ 新克隆的副本缺服务器地址与令牌，`npm run deploy` 用不了
-- **本机（用户 AAA）`git push` 会卡死**：`git ls-remote` 正常（匿名读），但 push 卡在
-  `git credential-manager get`（用 `GIT_TRACE=1` 定位），40s 超时。
-  `git-credential-wincred` 里没有 github.com 凭据，本机 `~/.ssh/id_ed25519` **也未授权给 GitHub**
-  （`ssh -T git@github.com` → Permission denied），没有 `gh`、没有 GITHUB_TOKEN。
-  → 同 session 前两次推送成功过、之后一直超时，属**间歇性**问题；`git-backup.mjs` 因此会
-  只完成提交、推送阶段被 SIGTERM。**遇到时先重试几次，仍不行就如实告知用户「提交已完成、推送待办」**
-- 本机 `~/.ssh/config` 只配了那台服务器（Host 199.180.116.188 / Port 27168 / User root），
-  **免密登录可用**；服务器 repo 在 `/opt/scplayer-events-stats`，`site/` 是线上站点目录
+## 环境坑
+- 沙箱 `curl` 走代理会卡 TLS（HTTP 000）→ 抓取一律 Node 原生 `fetch`；访问本机服务加 `--noproxy '*'`
+- 沙箱写不进 `.git/refs/remotes/origin/` → `git-backup.mjs` 用 `.git/packed-refs` 校准
+- 推送统一走 `node scripts/git-backup.mjs --msg "..."`（add -A + 提交 + 重试推送 + 校准引用）
+- 本机 `git push` **间歇性卡死**（卡在 `git credential-manager get`，40s 超时）；本机 ssh key 未授权 GitHub、
+  无 `gh`/TOKEN。遇时多试几次，仍不行就如实说「提交已完成、推送待办」
+- **本机无 Playwright 包**，`shoot.cjs` 跑不起来；改用 Playwright 缓存里的 Chromium 无头渲染验收
+  （`--virtual-time-budget`；`--screenshot` 与 `--dump-dom` 不能同时用）
+- Playwright **元素截图被固定顶栏 `.topbar` 盖住** → 截图前 `display:none` + 等 200ms（`visibility:hidden` 无效）
+- 写脚本用 Write 工具，别用 Bash heredoc（`${...}` 被 shell 展开报 Bad substitution）
+- `local.config.json` 不入库（gitignore）→ 缺服务器地址与令牌时 `npm run deploy` 用不了
+- `build-db.mjs` **禁止整目录 `rm(public/data/players)`**（>50 文件触发沙箱批量删除保护），现在逐个清理、幂等
+- 本机 `~/.ssh/config` 只配了那台服务器（199.180.116.188:27168 root），免密可用；
+  服务器 repo `/opt/scplayer-events-stats`，`site/` 是线上站点目录
 
-## 表格与排序
-- 表头排序统一走三个 helper（`app.js` 里 `wrCell` 之后）：`sortableTH(cols, sort)` /
-  `bindSort(sel, sort, redraw)` / `updateSortMarks(sel, sort)`
-  - `cols = [[key, 标签, 是否数值列, 首次点击的默认方向(1 升 / -1 降)], …]`
-  - 排序状态放 `state`（`playerSort` / `oppSort`），重绘后保持
-- **只重绘 `tbody` 的表格，必须手动调 `updateSortMarks()`** —— 表头不重建，
-  `.sorted` 高亮与 ▲▼ 箭头不会自己更新（排行榜整体重建 innerHTML 所以不需要）
-- 单行记录两栏表格统一走 `recColsHTML(list, REC_COLS, rowFn, emptyText)`，列定义 `REC_COLS`
-
-## 测试约定
-- `shoot.cjs` 的期望值必须**从构建产物（index.json 等）推导**，不要写死数字 —— 数据每天都在涨
-  （`PAGE_SIZE` 这类代码常量则从 `app.js` 源码正则读取）
-- Playwright 点下拉框附近的元素前记得 `blur()`，否则展开的下拉会拦截点击导致超时
-- 断言失败时先怀疑产品、再怀疑测试（曾在这一点上误判过一次）
-- **两栏/多表布局下 `tbody tr:first-child` 会命中多个元素**（Playwright strict mode 报错），
-  断言选择器要限定到具体一栏（`#xxx .table-wrap:first-child `）
-- Playwright `screenshot({clip})` 的坐标是**页面坐标**，而 `boundingBox()` 返回**视口坐标**，
-  页面滚动过就会错位 → 直接对 locator 做元素截图
-
-## 路由状态管理（踩过两次的坑）
-- **以 URL 为唯一事实来源**：凡是从 query 参数派生的筛选/页签状态（排行页 `event`、详情页 `tab`），
-  无参数时必须**显式复位**，不能写成 `if (params.get(x)) state.y = params.get(x)`
-- 切换这些状态时用 `history.replaceState` 同步地址栏（不触发 hashchange，不整页重渲染）
+## 官方接口（2026-09-20 踩过）
+- 详情 `/api/players/{id}`：**唯一返回真实 `college_name`**，但部分 id 稳定 500 → 不能当主路径
+- 列表 `/api/players?limit=200&offset=n`：稳定（1267 人/7 页），但 **`college_name` 恒 null**
+- **战队名解法**：`GET /api/colleges`（1 请求返回全部 13 支，`id`/`name`/…）→ `college_id → name`。
+  `sync.mjs` 的 `fetchColleges()` 干这个；`build-db.mjs` 写 `college: raw.college_name || null`
+  → **players.json 的 `college_name` 必须由 sync 补齐**
+- `syncPlayers` 刷新**所有在册选手**（不只新增），返回值字段是 **`refreshed`**；
+  列表未覆盖的女子组（5988/5990/5992）退回详情兜底
 
 ## 前端约定
-- **异步渲染函数里不要用全局 id 查询**（`$('#xxx')`）：`renderH2H` 这类 async 渲染要 `await` 数据，
-  期间用户可能已经切走页面 → 全局查询取到 `null` 而抛 `TypeError`。
-  正确做法：渲染开始时 `host.querySelector('#xxx')` **把元素引用捕获下来**，
-  绘制前再判断 `isConnected`（2026-09-20 修过一次：H2H 页 `draw()` 用 `$('#h2hBody')`
-  导致线上 1 条控制台错误）。同类写法都值得排查
+- 表头排序三个 helper（`app.js`）：`sortableTH(cols, sort)` / `bindSort(sel, sort, redraw)` / `updateSortMarks(sel, sort)`；
+  `cols=[[key,标签,是否数值,首点方向(1升/-1降)]]`；排序状态放 `state`（`playerSort`/`oppSort`）
+- **只重绘 `tbody` 的表格必须手动调 `updateSortMarks()`**（表头不重建，高亮/箭头不会自更新）
+- 单行记录两栏表格统一 `recColsHTML(list, REC_COLS, rowFn, emptyText)`
+- **路由以 URL 为唯一事实来源**：query 派生的状态（排行页 `event`、详情页 `tab`）无参数时必须**显式复位**；
+  切换用 `history.replaceState`
+- **异步渲染别用全局 `$('#xxx')`**：渲染开始用 `host.querySelector()` 捕获引用，绘制前判 `isConnected`
+  （H2H 页踩过 → 线上 1 条控制台错误）
 
-## 每日自动化（本地，现在只是**备份手段**）
-id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：
-`sync.mjs` → `verify.mjs` → `verify-range.mjs` → `git-backup.mjs` → **`push-server.mjs`** → 中文简报
+## 测试约定
+- `shoot.cjs` 期望值**从构建产物推导**，别写死数字（`PAGE_SIZE` 从 `app.js` 正则读）
+- 点下拉框附近元素前先 `blur()`；断言失败**先怀疑产品再怀疑测试**
+- 多表布局 `tbody tr:first-child` 命中多个（strict mode）→ 选择器限定具体栏
+- `screenshot({clip})` 用**页面坐标**，`boundingBox()` 是**视口坐标** → 直接对 locator 元素截图
 
-> **2026-09-19 起线上已改为服务器自助更新**（见下节），本自动化不再是必需品。
-> 两者同时跑不冲突（服务器只读 git、从不 push），但本地这台如果关着，线上照样更新。
+## 部署
+- **服务器自助定时更新（线上主路径）**：root crontab 10:20 / 20:20 →
+  `/opt/scplayer-events-stats/deploy/self-sync.sh`（`git fetch + reset --hard origin/main` →
+  `node --experimental-fetch scripts/sync.mjs` → verify + verify-range → `rsync public/ site/`）。
+  装/卸 `bash deploy/install-cron.sh [--remove]`；日志 `/var/log/scplayer-events-sync.log`；
+  `flock` 单实例；任一步失败不发布。**改 self-sync.sh 必须 push 到 GitHub 才生效**
+- **服务器 Node 16 兼容**：nvm 装于 `/root/.nvm/versions/node/v16.20.2/bin/`；
+  禁用 `import.meta.dirname`（用 `scripts/_paths.mjs` 的 `ROOT`）、`structuredClone`、`AbortSignal.timeout`；
+  无全局 `fetch` → 必须 `--experimental-fetch`；已装 rsync
+- 服务器 Ubuntu 18.04（glibc 2.27）→ 最高 Node 16。SSH `ssh -p 27168 root@199.180.116.188`
+  （**端口 27168**；偶发 ECONNRESET，隔几分钟重试，**别判定端口改了/被封**）
+- 同机另有旧版 `scplayer-stats`（端口 3001）、nginx(80) → 本项目用 **5001**
+- 部署走 **HTTP 增量推送**（日常不需 SSH）：`deploy/server.mjs`（静态 + `POST /api/deploy` Bearer token +
+  `/api/health` + `/api/manifest` sha1）；`scripts/push-server.mjs` 只推变化文件（`--full`/`--check`）。
+  实测首次全量 326 文件 / 5.5MB / 16.5s
+- **线上验收**：`BASE=http://199.180.116.188:5001 node scripts/shoot.cjs`（71 项断言）
+- 本机 npm 被安全策略拦死（调黑名单 `reg.exe`），装不了 `ssh2`；密码登录服务器改用 Python `paramiko`
+  （`C:\Users\yanwx\.workbuddy-ai\binaries\python\envs\default`，配套 `scripts/remote-deploy.py`）
 
-## 服务器自助定时更新（2026-09-19 上线，**线上主路径**）
-服务器**自己**定时抓取并更新，不依赖本地电脑：
+## 本地每日自动化（备份手段）
+id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：sync → verify → verify-range → git-backup →
+push-server → 中文简报。**2026-09-19 起线上已由服务器自助更新**，本自动化非必需；两者不冲突。
 
-```
-cron 10:20 / 20:20（root crontab，TZ=Asia/Shanghai）
-  └─ /opt/scplayer-events-stats/deploy/self-sync.sh
-       git fetch + reset --hard origin/main → node --experimental-fetch scripts/sync.mjs
-       → verify.mjs + verify-range.mjs → rsync public/ → site/
-```
-
-- 装/卸：`bash deploy/install-cron.sh` / `--remove`（幂等，先备份 crontab 到 `/root/crontab.backup.*`）
-- 日志 `/var/log/scplayer-events-sync.log`；手动试跑 `bash deploy/self-sync.sh`
-- `flock` 单实例锁；**sync/verify 任一步失败就不发布**，`site/` 保持原样
-- 实测：首次全量 56.7s，之后增量 5~9s；服务器**只读 git、从不 push**，
-  所以 `reset --hard` 安全（`site/` 未跟踪、`data/` 被 gitignore）
-- 时间选 10:20 是为了避开旧版 `scplayer-stats` 的 10:00 同步（同机 root crontab 已有 5 个别的任务）
-- **改 self-sync.sh 后必须 push 到 GitHub**，服务器下一轮 `git fetch` 才会生效（本地改不算数）
-
-### 服务器 Node 16 兼容（改服务器侧脚本必读）
-- node/pm2 由 **nvm** 安装：`/root/.nvm/versions/node/v16.20.2/bin/`（不在 /usr/local/bin，
-  cron 的 PATH 里也没有 nvm → self-sync.sh 里有绝对路径兜底查找）
-- **`import.meta.dirname` 会直接报错**（Node 20.11+）→ 统一用 `scripts/_paths.mjs` 导出的 `ROOT`
-- **没有全局 `fetch`**，必须 `node --experimental-fetch`（实测能读 `x-total-count`）；
-  `sync.mjs` 缺 fetch 时会打印明确提示而不是 ReferenceError
-- 禁止 `structuredClone` / `AbortSignal.timeout`；`.at(-1)` 可用 ✓
-- 服务器原本**没有 rsync**，已 `apt-get install -y rsync`（3.1.2）
-- 验证方式：`env -i PATH=/usr/bin:/bin HOME=/root bash deploy/self-sync.sh`（模拟 cron 最小环境）
-
-## 服务器部署（用户自有服务器）
-- 目标地址 **`http://199.180.116.188:5001/`** —— **已上线运行**（2026-09-18 部署完成，用户要求可在外网随时访问）
-- 服务器：**Ubuntu 18.04（glibc 2.27）** → 官方二进制最高只能用 **Node 16**，
-  服务器侧代码禁止使用 `import.meta.dirname` / `structuredClone` / `AbortSignal.timeout` 等新 API
-- 登录：`ssh -p 27168 root@199.180.116.188`（**端口是 27168**；22 等端口无监听）
-  - 本机 `~/.ssh/id_ed25519` 是 GitHub 专用，**未被该服务器授权**；服务器允许 publickey/password
-  - **该端口会偶发「建连后立刻 ECONNRESET」**，用 PowerShell 直连也一样 → 不是沙箱问题，
-    隔几分钟重试即可恢复，**不要因此判定「端口改了 / 被封了」**
-- 同机还跑着：旧版 `scplayer-stats`（`/opt/scplayer-stats`，PM2，端口 **3001**）、nginx(80)、3000 端口某服务
-  → 本项目端口选 **5001** 避让
-- 部署方式：**HTTP 增量推送，日常不需要走 SSH**
-  - `deploy/bootstrap.sh`（服务器上执行一次，幂等）：装 Node16/PM2 → 代码到 `/opt/scplayer-events-stats`
-    → 用 `public/` 初始化 `site/` → 写 `deploy/deploy-token.txt` → PM2 起 `deploy/server.mjs` 监听 0.0.0.0:5001 → ufw 放行
-  - `deploy/server.mjs`：静态服务 + `POST /api/deploy`（Bearer token，base64 写文件/删除）、
-    `GET /api/health`、`GET /api/manifest`（sha1 清单）
-  - `scripts/push-server.mjs`：本地比对 sha1 后**只推变化文件**（`--full` 全量 / `--check` 只比对）
-  - 地址与令牌放 **`local.config.json`（已 gitignore，不入库）**
-- 实测：首次全量 326 文件 / 5.5MB / 16.5s；无变化时幂等跳过；改 1 个文件 0.2s
-- **线上验收方式：`BASE=http://199.180.116.188:5001 node scripts/shoot.cjs`**（71 项断言；2026-09-18 全过、0 控制台错误）
-- 服务器实测跑的是 **Node v16.20.2**，与「服务器侧代码必须兼容 Node 16」的约束一致（改动 server.mjs 时别引入新 API）
-- 排障需 SSH：`pm2 logs scplayer-events-stats` / `pm2 restart scplayer-events-stats`
-- 本机 **npm 被安全策略拦死**（会调黑名单里的 `reg.exe`），装不了 `ssh2`；
-  若将来要用密码登录服务器，改用 Python `paramiko`（已装在
-  `C:\Users\yanwx\.workbuddy-ai\binaries\python\envs\default`，配套 `scripts/remote-deploy.py`）
-
-## 线上发布
-现在有**两个线上目标**，内容都是 `public/` 目录：
-1. **自有服务器 `http://199.180.116.188:5001/`**（主力目标，见上一节；`npm run deploy` 增量推送）
-2. 沙箱预览链接（见下）
-
-- 发布对象是 **`public/` 目录**（纯静态），不是项目根
-- 分享链接**按机器/工作副本各有一条**（sandboxId 不同 → 链接不同，互不覆盖）：
-  - 原副本（用户 yanwx）：`https://93a5c2c68d004874bfff959e25daade5.sg.agentos-app.run`
-  - 本机新克隆（用户 AAA，2026-09-19 发布）：`https://25d6bffd32f54fa5a230c6fb6c0a7840.sg.agentos-app.run`
-  - 同一目录重复发布会复用同一 sandbox，**链接不变、线上内容被覆盖**
-- **用户的长期授权（2026-09-18 明确要求）**：「以后每次做完都同步更新到线上分享链接，让我看效果」
-  → 完成改动 + 本地自检通过后，**直接重新发布，不必再逐次问**；发布后给出链接与线上验证结果
-- 每日 10:00 自动同步后线上**不会自动更新**，需要重新发布（链接不变，内容被覆盖）
-- **发布后的验收方式**：`BASE=<线上地址> node scripts/shoot.cjs` —— 同一套 **71 项**断言直接打线上，
-  比只看 HTTP 200 靠谱得多。**本机没有 Playwright 包、`shoot.cjs` 跑不起来**，
-  改用 Playwright 缓存里的 Chromium 无头渲染验收（见「环境坑」）
+## 沙箱预览发布（次要目标）
+- 发布对象是 `public/` 目录；链接**按机器/工作副本各一条**，重复发布复用同一 sandbox（链接不变、内容覆盖）
+  - 原副本（yanwx）：`https://93a5c2c68d004874bfff959e25daade5.sg.agentos-app.run`
+  - 本机新克隆（AAA，2026-09-19）：`https://25d6bffd32f54fa5a230c6fb6c0a7840.sg.agentos-app.run`
+- **用户长期授权**：「每次做完都同步更新线上分享链接」→ 改动 + 自检通过后**直接重新发布，不必逐次问**
