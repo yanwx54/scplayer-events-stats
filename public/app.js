@@ -1014,8 +1014,12 @@ async function renderH2H(aId, bId) {
 
   host.innerHTML = rangeBarHTML('h2hRange', state.h2h.from, state.h2h.to, FIRST, LAST)
     + '<div id="h2hBody"></div>';
+  // 按 host 局部查找并持有引用：renderH2H 是异步的，若用户在这期间切走页面，
+  // 全局 $('#h2hBody') 会取到 null 而抛错（曾导致线上 1 条控制台错误）
+  const body = host.querySelector('#h2hBody');
 
   const draw = () => {
+    if (!body || !body.isConnected) return; // 页面已切走，放弃这次绘制
     const { from, to } = state.h2h;
     const games = allGames.filter((m) => m.d && m.d >= from && m.d <= to);
     const aw = games.filter((g) => g.w).length, bw = games.length - aw;
@@ -1037,7 +1041,7 @@ async function renderH2H(aId, bId) {
       .sort((x, y) => y.games - x.games);
     const offSeason = Object.keys(byMap).length - mapRows.length;
 
-    $('#h2hBody').innerHTML = `
+    body.innerHTML = `
       <div class="card h2h-head">
         <div class="h2h-side">
           ${avatar(A, 'big-av')}

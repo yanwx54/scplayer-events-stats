@@ -98,6 +98,13 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
   无参数时必须**显式复位**，不能写成 `if (params.get(x)) state.y = params.get(x)`
 - 切换这些状态时用 `history.replaceState` 同步地址栏（不触发 hashchange，不整页重渲染）
 
+## 前端约定
+- **异步渲染函数里不要用全局 id 查询**（`$('#xxx')`）：`renderH2H` 这类 async 渲染要 `await` 数据，
+  期间用户可能已经切走页面 → 全局查询取到 `null` 而抛 `TypeError`。
+  正确做法：渲染开始时 `host.querySelector('#xxx')` **把元素引用捕获下来**，
+  绘制前再判断 `isConnected`（2026-09-20 修过一次：H2H 页 `draw()` 用 `$('#h2hBody')`
+  导致线上 1 条控制台错误）。同类写法都值得排查
+
 ## 每日自动化（本地，现在只是**备份手段**）
 id `6d509d81-1957-43f4-be6a-80da6aa7fa96`，每天 10:00：
 `sync.mjs` → `verify.mjs` → `verify-range.mjs` → `git-backup.mjs` → **`push-server.mjs`** → 中文简报
