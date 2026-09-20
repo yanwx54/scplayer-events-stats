@@ -43,10 +43,21 @@ eloboard 三大赛事（43 메이저 프로리그 / 33 K리그 / 64 준메이저
   （`visibility:hidden` 不生效，导航仍会被画出来）
 - 写脚本文件用 Write 工具，不要用 Bash heredoc（`${...}` 会被 shell 展开报 Bad substitution）
 - 手工提交推送统一走 `node scripts/git-backup.mjs --msg "feat: ..."`（自动 add -A + 提交 + 重试推送 + 校准追踪引用）
-- **官方 `/api/players/{id}` 详情接口已坏**（2026-09-19 发现）：对相当一部分 id 稳定 **500**，
-  含 김지성#29 这类当红选手 → 抓选手一律走**列表接口** `/api/players?limit=200&offset=n`
-  （正常、1267 人 / 7 页、字段与详情接口一致）。列表未覆盖的女子组（5988/5990/5992）退回详情兜底。
-  已改 `sync.mjs`（`fetchPlayerList()`）与 `fetch-players.mjs`，**别再改回逐 id 详情抓取**
+- **官方两个选手接口的差异（2026-09-20 踩过一次，务必记住）**：
+  - 详情 `/api/players/{id}`：**只有它返回真实 `college_name`**（战队名），但对相当一部分 id
+    稳定 **500**（含 김지성#29、신상문#100）→ 不能当主路径
+  - 列表 `/api/players?limit=200&offset=n`：稳定、1267 人 / 7 页，但 **`college_name` 恒为 null**
+    （实测 0/200 非空，只给 `college_id`）→ **光靠它会让战队名整片变成 null**
+    （注：2026-09-19 那条「列表字段与详情接口一致」的说法是错的，已纠正）
+  - **战队名的正确解法**：`GET /api/colleges` —— 1 个请求返回全部 **13 支**战队，
+    字段 `id` / `name` / `image_path` / `founded_on` / `is_disbanded` / `member_count` / …
+    用 `college_id → name` 解析即可，稳定且省请求。`sync.mjs` 的 `fetchColleges()` 就是干这个
+  - `build-db.mjs` 写的是 `college: raw.college_name || null`，所以
+    **`players.json` 里的 `college_name` 必须由 sync 补齐**，否则前端战队名全空
+- **`syncPlayers` 刷新「所有在册选手」**，不只是本地缺的（只补新增会导致两个问题：
+  ① 生涯战绩 wins/losses/last_played_on/elo 长期不更新；② 早期详情接口抓的条目缺 college_name）。
+  列表未覆盖的女子组（5988/5990/5992）退回详情兜底；已有数据且不在列表里的保持原样。
+  返回值字段是 **`refreshed`**（不再是 `added`），`dataChanged` 判断同步用了它
 - **`build-db.mjs` 禁止整目录 `rm(public/data/players)`** —— 86 个文件会触发沙箱批量删除保护
   （`SAFE_DELETE_BULK_CONFIRM_REQUIRED`，单轮 >50 个即拦）。现在是逐个清理失效文件，幂等
 - 本机（用户 AAA）**没有 Playwright 包**，`shoot.cjs` 里写死的 `D:/WorkSpace/scplayer-stats/...`

@@ -132,15 +132,31 @@ async function fetchPlayerList() {
   return { list, total };
 }
 
-/* ---------- 补抓选手元数据 ---------- */
+/* ---------- 战队（college）id → 名称 ---------- */
+/**
+ * 列表接口 /api/players 只给 college_id，college_name 恒为 null（实测 0/200 非空）；
+ * 真实战队名只在详情接口 /api/players/{id} 里，但它对不少 id 稳定 500，不能当主路径。
+ * /api/colleges 一次就返回全部战队（实测 13 支，字段 id/name/image_path/...），
+ * 用它把 college_id 解析成名称即可 —— 稳定、只要 1 个请求。
+ */
+async function fetchColleges() {
+  const map = new Map();
+  try {
+    const { data } = await getJson(`${BASE}/api/colleges`);
+    if (Array.isArray(data)) for (const c of data) map.set(c.id, c.name);
+    console.log(`  战队列表：官方 ${map.size} 支`);
+  } catch (e) {
+    console.warn(`  ⚠ 战队列表接口失败（${e.message}），沿用已有 college_name`);
+  }
+  return map;
+}
+
+/* ---------- 刷新选手元数据 ---------- */
 async function syncPlayers(allMatches) {
   const file = path.join(RAW, 'players.json');
   const players = await readJson(file, {});
-  const need = new Set();
-  for (const m of allMatches) for (const p of m.participants) {
-    if (!players[p.player_id]) need.add(p.player_id);
-  }
-  const added = [];
+  const tracked = new Set();
+  for (const m of allMatches) for (const p of m.participants) tracked.add(p.player_id);
 
   let list = new Map();
   try {
@@ -150,24 +166,42 @@ async function syncPlayers(allMatches) {
     console.warn(`  ⚠ 选手列表接口失败（${e.message}），退回逐 id 详情接口`);
   }
 
-  // 列表未覆盖的（如女子组等不在默认列表里的选手）退回详情接口，失败则跳过
-  const rest = [];
-  for (const id of [...need].sort((a, b) => a - b)) {
+  // 用列表接口刷新「所有在册选手」，而不只是新增的。
+  // 只补新增会导致两个问题：
+  //   ① 生涯战绩（wins/losses/last_played_on/elo）长期不更新，越来越旧；
+  //   ② 早期用详情接口抓的条目缺 college_name（详情接口只给 college_id），
+  //      于是 build-db 的 `college: raw.college_name || null` 只能写成 null，战队名整片丢失。
+  // 列表接口 7 页就能拿全 1267 人，每天全量刷新成本可忽略。
+  const refreshed = [];
+  const missing = [];
+  const colleges = await fetchColleges();
+  for (const id of [...tracked].sort((a, b) => a - b)) {
     const p = list.get(id);
     if (p) {
+      // 列表接口不带 college_name，用 /api/colleges 的 id→名称补齐；
+      // 补不到时保留原值，绝不能把已知战队名冲成 null
+      if (!p.college_name && p.college_id != null && colleges.has(p.college_id)) {
+        p.college_name = colleges.get(p.college_id);
+      }
+      const prev = players[id];
+      if (!p.college_name && prev && prev.college_name && prev.college_id === p.college_id) {
+        p.college_name = prev.college_name;
+      }
+      if (JSON.stringify(prev) !== JSON.stringify(p)) refreshed.push(`${p.name}(${id})`);
       players[id] = p;
-      added.push(`${p.name}(${id})`);
     } else {
-      rest.push(id);
+      missing.push(id);
     }
   }
 
+  // 列表未覆盖的（如女子组等不在默认列表里的选手）退回详情接口；已有数据且不在列表里的保持原样
   let unresolved = 0;
-  for (const id of rest) {
+  for (const id of missing) {
+    if (players[id]) continue;
     try {
       const { data } = await getJson(`${BASE}/api/players/${id}`);
       players[id] = data;
-      added.push(`${data.name}(${id})`);
+      refreshed.push(`${data.name}(${id})`);
     } catch (e) {
       unresolved++;
       console.warn(`   选手 ${id} 详情接口失败（${e.message}），跳过（构建时会用比赛记录兜底）`);
@@ -175,8 +209,8 @@ async function syncPlayers(allMatches) {
     await sleep(80);
   }
 
-  if (added.length) await writeFile(file, JSON.stringify(players));
-  return { total: Object.keys(players).length, added, unresolved };
+  if (refreshed.length) await writeFile(file, JSON.stringify(players));
+  return { total: Object.keys(players).length, tracked: tracked.size, refreshed, unresolved };
 }
 
 /* ---------- 补下载头像 ---------- */
@@ -225,7 +259,7 @@ async function main() {
   for (const e of EVENTS) allMatches.push(...await readJson(path.join(RAW, `event-${e}.json`), []));
 
   const pl = await syncPlayers(allMatches);
-  console.log(`  选手元数据：${pl.total} 人${pl.added.length ? `，新增 ${pl.added.join('、')}` : '，无新增'}`);
+  console.log(`  选手元数据：在册 ${pl.total} 人（比赛涉及 ${pl.tracked} 人）${pl.refreshed.length ? `，刷新 ${pl.refreshed.length} 人` : '，无变化'}`);
   if (pl.unresolved) console.log(`  ⚠ ${pl.unresolved} 名选手元数据未取到（已由比赛记录兜底）`);
 
   const av = await syncAvatars();
@@ -233,7 +267,7 @@ async function main() {
 
   // 数据无任何变化时跳过重建 —— 避免 index.json 里的 builtAt 时间戳
   // 每天制造一个无意义的提交（否则每日自动化会天天产生空提交噪声）
-  const dataChanged = results.some((r) => r.changed) || pl.added.length > 0 || av.length > 0;
+  const dataChanged = results.some((r) => r.changed) || pl.refreshed.length > 0 || av.length > 0;
   let rebuilt = false;
   if (NO_BUILD) {
     console.log('  跳过重建（--no-build）');
