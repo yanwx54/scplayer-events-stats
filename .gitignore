@@ -12,6 +12,9 @@ local.config.json
 deploy/deploy-token.txt
 deploy/site/
 
+# 评审/审计报告（含安全发现，仓库是公开的，绝不可入库）
+deliverables/
+
 # 杂项
 .DS_Store
 Thumbs.db
