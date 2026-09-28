@@ -36,6 +36,8 @@ eloboard 三大赛事（43 职业联赛 / 33 K联赛 / 64 半职业联赛）选�
 - `build-db.mjs` **禁止整目录 `rm(public/data/players)`**（>50 文件触发沙箱批量删除保护），现在逐个清理、幂等
 - 本机 `~/.ssh/config` 只配了那台服务器（199.180.116.188:27168 root），免密可用；
   服务器 repo `/opt/scplayer-events-stats`，`site/` 是线上站点目录
+- `public/data/index.json` 顶层是 `{meta,events,mapCn,raceCn,months,players}` → 总场次/选手数/最新日期
+  在 **`meta`** 里（`j.totalMatches` 会是 undefined，要读 `j.meta.totalMatches`）。线上抽检别读错层
 
 ## 官方接口（2026-09-20 踩过）
 - 详情 `/api/players/{id}`：**唯一返回真实 `college_name`**，但部分 id 稳定 500 → 不能当主路径
