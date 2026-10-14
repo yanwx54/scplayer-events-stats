@@ -26,8 +26,15 @@ function sumBuckets(buckets, lo, hi, ev) {
 const raw = [];
 for (const ev of [43, 33, 64]) raw.push(...JSON.parse(await readFile(`data/raw/event-${ev}.json`, 'utf8')));
 
+/**
+ * 复算「日期 × 赛事」区间求和。
+ * build-db 对每个 (日期, 赛事) 桶的 ELO 先各自舍入到 0.1 再写入 daily.json，
+ * 因此这里必须同样「先分桶、逐桶舍入、再求和」，否则小数 ELO 会带来
+ * 最高 0.05×桶数 的舍入差（场次/胜场是整数，不受影响）。
+ */
 function brute(pid, from, to, ev) {
-  let g = 0, w = 0, e = 0;
+  let g = 0, w = 0;
+  const buckets = new Map();
   for (const m of raw) {
     if (ev && m.event_id !== ev) continue;
     const d = m.played_on || '';
@@ -38,8 +45,13 @@ function brute(pid, from, to, ev) {
     g++;
     const win = me.result === 'win';
     if (win) w++;
-    if (typeof m.elo_delta === 'number') e += win ? m.elo_delta : -m.elo_delta;
+    if (typeof m.elo_delta === 'number') {
+      const key = d + '|' + m.event_id;
+      buckets.set(key, (buckets.get(key) || 0) + (win ? m.elo_delta : -m.elo_delta));
+    }
   }
+  let e = 0;
+  for (const v of buckets.values()) e += Math.round(v * 10) / 10;
   return { g, w, elo: Math.round(e * 10) / 10 };
 }
 

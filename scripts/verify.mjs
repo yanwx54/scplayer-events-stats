@@ -42,9 +42,34 @@ console.log('  明细自洽', p.matches.length === p.games ? '✓' : '✗');
 console.log('  胜场自洽', p.matches.filter((m) => m.w).length === p.wins ? '✓' : '✗');
 console.log('  对手带中文名', p.opponents.filter((o) => o.cn).length, '/', p.opponents.length);
 
-// 月度 ELO：逐月净变之和 == eloNet；月末 ELO 相邻差 == 后一月的净变；末月 == 当前官方 ELO
+// 先取出该选手在本统计口径内的全部原始对局，供 ELO / 场次复算共用
+const rawTop = [];
+for (const e of [43, 33, 64]) {
+  const arr = JSON.parse(await readFile(`data/raw/event-${e}.json`, 'utf8'));
+  for (const m of arr) {
+    if (!inScope(m)) continue;
+    const me = m.participants.find((x) => x.player_id === topP.id);
+    if (me) rawTop.push({ m, me });
+  }
+}
+
+/**
+ * 月度 ELO：build-db 是「逐月累计原始 elo_delta → 每月各自舍入到 0.1」，
+ * 因此各月之和与「原始总额舍入」在数学上可以差 0.05×月数（ELO 值本身带小数，非整数）。
+ * 这里按同样口径逐月独立复算，做等量比较；eloNet 则单独与原始总额比对。
+ */
+const mChg = {};
+for (const { m, me } of rawTop) {
+  if (typeof m.elo_delta !== 'number') continue;
+  const mo = (m.played_on || '').slice(0, 7);
+  mChg[mo] = (mChg[mo] || 0) + (me.result === 'win' ? m.elo_delta : -m.elo_delta);
+}
 const sumChg = Math.round(p.monthly.reduce((a, m) => a + (m.eloChg || 0), 0) * 10) / 10;
-console.log('  月度 ELO 净变之和', sumChg, '= eloNet', p.eloNet, sumChg === p.eloNet ? '✓' : '✗');
+const sumChgRaw = Math.round(Object.values(mChg).reduce((a, v) => a + Math.round(v * 10) / 10, 0) * 10) / 10;
+console.log('  月度 ELO 净变之和', sumChg, '= 逐月独立复算', sumChgRaw, sumChg === sumChgRaw ? '✓' : '✗');
+const rawNet = Math.round(rawTop.reduce((a, { m, me }) => a
+  + (typeof m.elo_delta === 'number' ? (me.result === 'win' ? m.elo_delta : -m.elo_delta) : 0), 0) * 10) / 10;
+console.log('  ELO 净变 eloNet', p.eloNet, '= 原始数据独立复算', rawNet, p.eloNet === rawNet ? '✓' : '✗');
 let eloOk = p.monthly.at(-1).eloEnd === p.elo;
 for (let i = 1; i < p.monthly.length; i++) {
   const d = Math.round((p.monthly[i].eloEnd - p.monthly[i - 1].eloEnd) * 10) / 10;
@@ -55,14 +80,7 @@ console.log('  有 ELO 的月份', p.monthly.filter((m) => m.eloChg != null).len
   '（未结算的月份 eloChg 为 null，折线按 0 处理）');
 
 let g = 0, w = 0;
-for (const e of [43, 33, 64]) {
-  const arr = JSON.parse(await readFile(`data/raw/event-${e}.json`, 'utf8'));
-  for (const m of arr) {
-    if (!inScope(m)) continue;
-    const me = m.participants.find((x) => x.player_id === topP.id);
-    if (me) { g++; if (me.result === 'win') w++; }
-  }
-}
+for (const { me } of rawTop) { g++; if (me.result === 'win') w++; }
 console.log(`  原始数据独立复算 ${g} 场 ${w} 胜 →`, g === p.games && w === p.wins ? '✓ 一致' : '✗ 不一致');
 
 console.log('\n=== 地图口径 ===');
