@@ -27,6 +27,8 @@ eloboard 三大赛事（43 职业联赛 / 33 K联赛 / 64 半职业联赛）选�
 
 ## 环境坑
 - 沙箱 `curl` 走代理会卡 TLS（HTTP 000）→ 抓取一律 Node 原生 `fetch`；访问本机服务加 `--noproxy '*'`
+- 线上 5001 抽检：**连续快速 `fetch` 会触发 `UND_ERR_CONNECT_TIMEOUT`（10s）**，加 2s 间隔重试即成功；
+  不是服务器故障，`push-server.mjs` 批量推送不受影响
 - 沙箱写不进 `.git/refs/remotes/origin/` → `git-backup.mjs` 用 `.git/packed-refs` 校准
 - 推送统一走 `node scripts/git-backup.mjs --msg "..."`（add -A + 提交 + 重试推送 + 校准引用）
 - 本机 `git push` **间歇性卡死**（卡在 `git credential-manager get`，40s 超时）；本机 ssh key 未授权 GitHub、
