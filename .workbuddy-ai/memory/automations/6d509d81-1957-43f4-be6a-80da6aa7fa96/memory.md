@@ -429,5 +429,29 @@
   （totalMatches=4867、players=91、last=2026-11-03、builtAt 一致）✓
 - 备注：无网络重试、无数据异常。任务书 Node 路径写 `22.22.2-2`，实际 `22.22.2-6`
 
+## 2026-11-06 09:08
+- **结果：部分异常——eloboard.com 与 SSH 均不可达，改从服务器 HTTP 拉取数据完成同步**
+- **网络故障**：eloboard.com HTTPS 从本机 TLS 握手即被远端关闭（`SocketError: other side closed`），
+  curl/Node fetch/PowerShell 均失败；SSH 到服务器（27168 端口）也持续 `Connection reset`（4+ 次重试均失败）。
+  服务器 HTTP 5001 端口正常。**根因推测：本机出口 IP 被 eloboard.com 或中间网络层临时阻断**
+- **降级方案**：服务器 self-sync 已于 11-05 10:20（北京时间）成功同步（`builtAt: 2026-11-05T02:20:14`），
+  线上数据已更新到 **2026-11-04**（totalMatches=4882）。写临时脚本 `scripts/pull-from-server.mjs`，
+  通过 HTTP 从线上 `public/data/` 拉取全部 94 个 JSON 文件到本地，34 个有变更 → 本地与线上数据一致
+- sync：未能执行（eloboard.com 不可达）；本地 raw 数据未更新（仍为 43=14332 / 33=13281 / 64=1416，
+  截至 2026-11-03），仅 public/data 从服务器同步到 2026-11-04
+- 库（从服务器同步后）：**4,882 场 / 91 选手 / 截至 2026-11-04**（比上次 +15 场，新增明细未知——
+  raw 未更新无法逐条核对，但服务器 self-sync 的 verify 已通过）
+- verify：核心校验全 ✓（9764=4882×2 ✓、胜=负=4882 ✓、分赛事 ×2 口径 5258/3464/1042 ✓、id 无重复 ✓）；
+  **抽样复算 ✗（527 vs 524 场、maps 3103 vs 3088）——原因：本地 raw 还是旧数据（11-03），
+  public/data 是新数据（11-04），两者不同步导致交叉校验失败**；月度 ELO 舍入 ✗ 属已知口径差异
+- verify-range：`RANGE_OK`（64 项）
+- GitHub：`GIT_BACKUP_OK`，提交 `91b5c72`（36 文件，含新增 `scripts/pull-from-server.mjs`，一次推送成功）
+- 线上：`✓ 线上已是最新，无需推送`（数据即从服务器拉取）；抽检 index/daily/maps/players 5 文件 sha1 本地==线上 ✓，
+  `meta` 逐字一致（totalMatches=4882、players=91、last=2026-11-04）
+- 备注：**本次为降级同步——raw 未更新，仅 public/data 与服务器一致**。
+  下次 eloboard.com 恢复后应跑 `node scripts/sync.mjs --full` 补齐 raw 数据。
+  新增脚本 `scripts/pull-from-server.mjs` 可作为 eloboard.com 不可达时的降级方案。
+  任务书 Node 路径写 `22.22.2-2`，实际 `22.22.2-6`
+
 ## 历史
 （此前无记录文件，本文件自 2026-09-20 起建立）
