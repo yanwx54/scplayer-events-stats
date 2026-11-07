@@ -116,6 +116,7 @@ Project07_scplayer-stats/
 ├── scripts/
 │   ├── _paths.mjs               # 共享 ROOT（兼容 Node 16，替代 import.meta.dirname）
 │   ├── sync.mjs                 # 每日增量同步（抓新对局 + 补选手/头像 + 重建）
+│   ├── html-source.mjs          # 网页兜底抓取（/api/* 403 时从服务端渲染页面解析）
 │   ├── fetch-matches.mjs        # 抓取三大赛事全量比赛
 │   ├── fetch-players.mjs        # 抓取选手元数据
 │   ├── fetch-avatars.mjs        # 下载头像
@@ -173,6 +174,18 @@ scripts/sync.mjs  →  scripts/verify.mjs  →  scripts/verify-range.mjs  →  s
    （避免 `meta.builtAt` 这类时间戳造成每天一次的无意义提交）。
 
 实测：无新数据时约 2.5~5 秒完成（每赛事仅 2 页）。
+
+### API 被拒时的网页兜底（`scripts/html-source.mjs`）
+
+2026-11-05 起 eloboard.com 的 `/api/*` 开始返回 **403 Forbidden（nginx）**，但网页本身仍可访问。
+`sync.mjs` 在 API 抓取失败时会自动改抓服务端渲染页面，数据口径与 API 一致：
+
+- `/events/{id}?tab=results&rk=team` → 团队赛「按日」列表
+- `/events/{id}?tab=results&rk=team&day=N` → 单日详情：阵容、每盘地图 / 选手 / 胜负、真实 `match id`
+- `/events/{id}?tab=results` → 个人赛最近 30 场（duels）
+
+注意：网页不提供 `elo_delta`，兜底抓到的对局 `elo_delta` 记为 `null`（按「未结算」处理，
+不计入 ELO 净变，与站点当时的表现一致）；选手元数据接口同样被拒时沿用本地 `players.json`。
 
 ### GitHub 备份（`scripts/git-backup.mjs`）
 

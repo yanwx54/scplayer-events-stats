@@ -18,6 +18,7 @@ import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { ROOT } from './_paths.mjs';
+import { fetchEventViaHtml } from './html-source.mjs';
 
 // Node 16 兼容：全局 fetch 是 Node 18+ 才有的。服务器（Ubuntu 18.04 / Node 16.20.2）
 // 必须用 `node --experimental-fetch` 启动，否则这里给出明确提示而不是晦涩的 ReferenceError。
@@ -110,6 +111,50 @@ async function syncEvent(eventId) {
   return { eventId, before: existing.length, after: merged.length, added, removed, changed, officialTotal: total, pages: pages + 1 };
 }
 
+/* ---------- 网页兜底：/api/* 403 时改从服务端渲染页面抓 ---------- */
+async function syncEventHtml(eventId) {
+  const file = path.join(RAW, `event-${eventId}.json`);
+  let rawText = '';
+  try { rawText = await readFile(file, 'utf8'); } catch { /* 首次运行 */ }
+  const existing = (() => { try { return JSON.parse(rawText); } catch { return []; } })();
+  const lastDate = existing.reduce((a, m) => (m.played_on && m.played_on > a ? m.played_on : a), '');
+
+  const players = await readJson(path.join(RAW, 'players.json'), {});
+  const raceById = new Map();
+  for (const p of Object.values(players)) if (p.main_race) raceById.set(Number(p.id), p.main_race);
+
+  const { matches: fresh, fetched } = await fetchEventViaHtml(eventId, { lastDate, raceById });
+
+  const map = new Map();
+  for (const m of existing) map.set(m.id, m);
+  let added = 0;
+  for (const m of fresh) {
+    if (!map.has(m.id)) added++;
+    map.set(m.id, m);
+  }
+  const merged = [...map.values()].sort(
+    (a, b) => (b.played_on || '').localeCompare(a.played_on || '') || b.id - a.id
+  );
+
+  const nextText = JSON.stringify(merged);
+  const changed = nextText !== rawText;
+  if (changed) {
+    await mkdir(RAW, { recursive: true });
+    await writeFile(file, nextText);
+  }
+  return {
+    eventId,
+    before: existing.length,
+    after: merged.length,
+    added,
+    removed: 0,
+    changed,
+    officialTotal: 0,
+    pages: fetched,
+    mode: 'html',
+  };
+}
+
 /* ---------- 拉取全量选手列表 ---------- */
 /**
  * 官方 /api/players/{id} 详情接口已不稳定：对相当一部分 id（含当红选手）稳定返回 500。
@@ -159,11 +204,19 @@ async function syncPlayers(allMatches) {
   for (const m of allMatches) for (const p of m.participants) tracked.add(p.player_id);
 
   let list = new Map();
+  let listOk = true;
   try {
     ({ list } = await fetchPlayerList());
     console.log(`  选手列表：官方 ${list.size} 人`);
   } catch (e) {
-    console.warn(`  ⚠ 选手列表接口失败（${e.message}），退回逐 id 详情接口`);
+    listOk = false;
+    console.warn(`  ⚠ 选手列表接口失败（${e.message}），沿用本地 players.json`);
+  }
+
+  // 列表接口整体不可用时（如 /api/* 全被 403），逐 id 详情同样会失败，
+  // 没必要对着几十个 id 连续报错，直接保留本地元数据。
+  if (!listOk) {
+    return { total: Object.keys(players).length, tracked: tracked.size, refreshed: [], unresolved: 0 };
   }
 
   // 用列表接口刷新「所有在册选手」，而不只是新增的。
@@ -249,10 +302,19 @@ async function main() {
 
   const results = [];
   for (const e of EVENTS) {
-    const r = await syncEvent(e);
+    let r;
+    try {
+      r = await syncEvent(e);
+    } catch (err) {
+      console.warn(`  赛事 ${e}: API 抓取失败（${err.message}），改用网页抓取…`);
+      r = await syncEventHtml(e);
+    }
     results.push(r);
     const tag = r.changed ? (r.added ? `新增 ${r.added}` : '记录有修正') : '无变化';
-    console.log(`  赛事 ${e}: ${r.before} → ${r.after}（${tag}，纠正/移除 ${r.removed}）· 官方总数 ${r.officialTotal} · ${r.pages} 页`);
+    const tail = r.mode === 'html'
+      ? `网页兜底 · 抓取 ${r.pages} 天`
+      : `官方总数 ${r.officialTotal} · ${r.pages} 页`;
+    console.log(`  赛事 ${e}: ${r.before} → ${r.after}（${tag}，纠正/移除 ${r.removed}）· ${tail}`);
   }
 
   const allMatches = [];

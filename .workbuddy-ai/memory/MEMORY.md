@@ -39,6 +39,11 @@ eloboard 三大赛事（43 职业联赛 / 33 K联赛 / 64 半职业联赛）选�
   取 `git credential fill` 的 token 走 Git Data API（blob → tree(base_tree=远端父 tree) → commit → PATCH ref），
   **逐字复现本地提交**，远端哈希与本地一致、不分叉。限制：只支持「领先远端 1 个提交」
 - 若 github.com 长期不通，服务器 self-sync 的 `git fetch` 也会失败 → 线上会停更，需另想推送通道
+- **2026-11-05 起 eloboard.com 的 `/api/*` 全部 403（nginx），网页本身正常**：
+  `sync.mjs` 会抛 `SYNC_FAILED`。现已内置网页兜底 `scripts/html-source.mjs`：
+  `?tab=results&rk=team`（按日列表）→ `&day=N`（单日详情，含真实 match id / 每盘地图 / 选手 / 胜负），
+  个人赛用默认 tab 的 `duels`。网页不给 `elo_delta` → 兜底记录为 `null`（按未结算处理，不计入 ELO）；
+  选手列表接口也被拒时 `syncPlayers` 直接沿用本地 `players.json`，不再逐个 id 重试
 - **本机无 Playwright 包**，`shoot.cjs` 跑不起来；改用 Playwright 缓存里的 Chromium 无头渲染验收
   （`--virtual-time-budget`；`--screenshot` 与 `--dump-dom` 不能同时用）
 - Playwright **元素截图被固定顶栏 `.topbar` 盖住** → 截图前 `display:none` + 等 200ms（`visibility:hidden` 无效）
